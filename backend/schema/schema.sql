@@ -8,7 +8,7 @@ CREATE SCHEMA IF NOT EXISTS app;
 CREATE TYPE app.message_sender AS ENUM ('ai', 'user');
 CREATE TYPE app.interview_status AS ENUM ('draft', 'in_progress', 'completed');
 
--- 1) Teachers
+-- Teachers
 CREATE TABLE app.teachers (
     teacher_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email           TEXT NOT NULL UNIQUE,
@@ -19,7 +19,7 @@ CREATE TABLE app.teachers (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 2) Rubrics
+-- Rubrics
 CREATE TABLE app.rubrics (
     rubric_id       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     teacher_id      UUID NOT NULL REFERENCES app.teachers(teacher_id) ON DELETE CASCADE,
@@ -31,7 +31,7 @@ CREATE TABLE app.rubrics (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 3) Rubric criteria
+-- Rubric criteria
 CREATE TABLE app.rubric_criteria (
     rubric_criterion_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rubric_id           UUID NOT NULL REFERENCES app.rubrics(rubric_id) ON DELETE CASCADE,
@@ -44,7 +44,7 @@ CREATE TABLE app.rubric_criteria (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 4) Interview plans
+-- Interview plans
 CREATE TABLE app.interview_plans (
     interview_plan_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rubric_id         UUID NOT NULL REFERENCES app.rubrics(rubric_id) ON DELETE CASCADE,
@@ -56,7 +56,7 @@ CREATE TABLE app.interview_plans (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 5) Interview questions
+-- Interview questions
 CREATE TABLE app.interview_questions (
     interview_question_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_plan_id      UUID NOT NULL REFERENCES app.interview_plans(interview_plan_id) ON DELETE CASCADE,
@@ -71,7 +71,7 @@ CREATE TABLE app.interview_questions (
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 6) Interviews (simulation now, real students later)m
+-- Interviews (simulation now, real students later)m
 CREATE TABLE app.interviews (
     interview_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_plan_id UUID NOT NULL REFERENCES app.interview_plans(interview_plan_id) ON DELETE CASCADE,
@@ -83,7 +83,7 @@ CREATE TABLE app.interviews (
     completed_at      TIMESTAMPTZ
 );
 
--- 7) Interview messages (chat log)
+-- Interview messages (chat log)
 CREATE TABLE app.interview_messages (
     interview_message_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_id         UUID NOT NULL REFERENCES app.interviews(interview_id) ON DELETE CASCADE,
@@ -93,7 +93,7 @@ CREATE TABLE app.interview_messages (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 8) Interview summaries
+-- Interview summaries
 CREATE TABLE app.interview_summaries (
     interview_summary_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_id          UUID NOT NULL UNIQUE REFERENCES app.interviews(interview_id) ON DELETE CASCADE,
@@ -105,7 +105,7 @@ CREATE TABLE app.interview_summaries (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 9) Criterion-level evidence
+-- Criterion-level evidence
 CREATE TABLE app.criterion_evidence (
     criterion_evidence_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_summary_id   UUID NOT NULL REFERENCES app.interview_summaries(interview_summary_id) ON DELETE CASCADE,
