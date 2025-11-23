@@ -1,0 +1,31 @@
+version: "2"
+
+sql:
+  - engine: "postgresql"
+    schema:
+      - "db/schema.sql"
+    queries:
+      - "db/queries"
+    gen:
+      go:
+        package: "db"
+        out: "internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_db_tags: true
+        emit_interface: false
+        emit_pointers_for_null: true
+        overrides:
+          # Use github.com/google/uuid for UUIDs
+          - db_type: "pg_catalog.uuid"
+            go_type: "github.com/google/uuid.UUID"
+          # timestamptz → time.Time
+          - db_type: "pg_catalog.timestamptz"
+            go_type: "time.Time"
+
+# If you want global type overrides (alternative way):
+overrides:
+  - db_type: "pg_catalog.uuid"
+    go_type: "github.com/google/uuid.UUID"
+  - db_type: "pg_catalog.timestamptz"
+    go_type: "time.Time"

@@ -46,7 +46,7 @@ CREATE TABLE app.rubric_criteria (
     rubric_id           UUID NOT NULL REFERENCES app.rubrics(rubric_id) ON DELETE CASCADE,
     name                TEXT NOT NULL,
     description         TEXT,
-    weight              NUMERIC(5,2) NOT NULL DEFAULT 1.0,m
+    weight              NUMERIC(5,2) NOT NULL DEFAULT 1.0,
     order_index         INT NOT NULL DEFAULT 0,
     levels              JSONB,   -- { "A": "...", "B": "..." } etc.
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -155,7 +155,6 @@ CREATE TABLE app.interview_questions (
     
     follow_up_to_id        UUID REFERENCES app.interview_questions(interview_question_id) ON DELETE SET NULL,
     follow_up_condition    TEXT,
-    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
