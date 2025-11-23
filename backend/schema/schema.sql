@@ -8,6 +8,15 @@ CREATE SCHEMA IF NOT EXISTS app;
 CREATE TYPE app.message_sender AS ENUM ('ai', 'user');
 CREATE TYPE app.interview_status AS ENUM ('draft', 'in_progress', 'completed');
 
+-- Response category ENUM for branching logic
+CREATE TYPE app.response_category AS ENUM (
+    'strong',
+    'partial',
+    'incorrect',
+    'misconception',
+    'dont_know'
+);
+
 -- Teachers
 CREATE TABLE app.teachers (
     teacher_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -44,6 +53,41 @@ CREATE TABLE app.rubric_criteria (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+--------------------------------------------------------------------------------
+Curriculum alignment tables (Victorian Curriculum / subject-agnostic)
+--------------------------------------------------------------------------------
+
+-- High-level curriculum descriptor, e.g. VCDTDI038, VCMNA350, VCELT458, etc.
+CREATE TABLE app.curriculum_descriptors (
+    curriculum_descriptor_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code                      TEXT NOT NULL,          -- e.g. 'VCDTDI038'
+    subject                   TEXT NOT NULL,          -- e.g. 'Digital Technologies'
+    level_band                TEXT NOT NULL,          -- e.g. '7-8', '9-10'
+    strand                    TEXT,                   -- e.g. 'Digital Systems', 'Data and Information'
+    substrand                 TEXT,                   -- optional sub-strand name
+    description               TEXT NOT NULL,          -- official content description text
+    elaborations              JSONB,                  -- array of elaboration strings, if you want them
+    achievement_standard_excerpt  TEXT,               -- relevant bit of the achievement standard
+    metadata                  JSONB NOT NULL DEFAULT '{}'::jsonb, -- for any extra flags/tags
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_curriculum_descriptors_code UNIQUE (code)
+);
+
+-- Link interview plans to one or more curriculum descriptors
+-- (Many-to-many: one plan may hit multiple descriptors; one descriptor used by many plans)
+CREATE TABLE app.interview_plan_curriculum_descriptors (
+    interview_plan_id         UUID NOT NULL REFERENCES app.interview_plans(interview_plan_id) ON DELETE CASCADE,
+    curriculum_descriptor_id  UUID NOT NULL REFERENCES app.curriculum_descriptors(curriculum_descriptor_id) ON DELETE CASCADE,
+    primary_alignment         BOOLEAN NOT NULL DEFAULT FALSE, -- e.g. the main descriptor
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (interview_plan_id, curriculum_descriptor_id)
+);
+
+--------------------------------------------------------------------------------
+-- Interview plans
+--------------------------------------------------------------------------------
+
 -- Interview plans
 CREATE TABLE app.interview_plans (
     interview_plan_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -52,18 +96,63 @@ CREATE TABLE app.interview_plans (
     instructions      TEXT,
     config            JSONB NOT NULL DEFAULT '{}'::jsonb,
     status            app.interview_status NOT NULL DEFAULT 'draft',
+
+    -- High-level curriculum alignment summaries for quick filtering
+    curriculum_subject    TEXT,    -- denormalised from curriculum_descriptors.subject
+    curriculum_level_band TEXT,    -- denormalised from curriculum_descriptors.level_band
+    
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+--------------------------------------------------------------------------------
+-- Concept and misconception tagging for questions
+--------------------------------------------------------------------------------
+
+-- Concept tags like 'DHCP_process', 'IP_addressing', 'Pythagoras', etc.
+CREATE TABLE app.concept_tags (
+    concept_tag_id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name                     TEXT NOT NULL,          -- short slug, e.g. 'DHCP_process'
+    display_name             TEXT,                   -- optional nice label
+    description              TEXT,
+    curriculum_descriptor_id UUID REFERENCES app.curriculum_descriptors(curriculum_descriptor_id)
+                               ON DELETE SET NULL,   -- optional: concept anchored to a descriptor
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_concept_tags_unique_per_descriptor
+        UNIQUE (curriculum_descriptor_id, name)
+);
+
+-- Misconceptions, optionally linked to a concept tag
+CREATE TABLE app.misconception_tags (
+    misconception_tag_id     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name                     TEXT NOT NULL,         -- e.g. 'router_is_internet'
+    display_name             TEXT,                  -- e.g. 'Router is the internet'
+    description              TEXT,
+    concept_tag_id           UUID REFERENCES app.concept_tags(concept_tag_id) ON DELETE SET NULL,
+    curriculum_descriptor_id UUID REFERENCES app.curriculum_descriptors(curriculum_descriptor_id)
+                               ON DELETE SET NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_misconception_tags_unique_per_descriptor
+        UNIQUE (curriculum_descriptor_id, name)
+);
+
+--------------------------------------------------------------------------------
+-- Interview questions
+--------------------------------------------------------------------------------
 
 -- Interview questions
 CREATE TABLE app.interview_questions (
     interview_question_id  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_plan_id      UUID NOT NULL REFERENCES app.interview_plans(interview_plan_id) ON DELETE CASCADE,
     rubric_criterion_id    UUID REFERENCES app.rubric_criteria(rubric_criterion_id) ON DELETE SET NULL,
+    
     prompt                 TEXT NOT NULL,
     question_type          TEXT NOT NULL DEFAULT 'open', -- future-proof
     order_index            INT NOT NULL DEFAULT 0,
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    
     follow_up_to_id        UUID REFERENCES app.interview_questions(interview_question_id) ON DELETE SET NULL,
     follow_up_condition    TEXT,
     is_active              BOOLEAN NOT NULL DEFAULT TRUE,
@@ -71,7 +160,56 @@ CREATE TABLE app.interview_questions (
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Interviews (simulation now, real students later)m
+-- Link questions to concept tags (many-to-many)
+CREATE TABLE app.interview_question_concept_tags (
+    interview_question_id  UUID NOT NULL REFERENCES app.interview_questions(interview_question_id) ON DELETE CASCADE,
+    concept_tag_id         UUID NOT NULL REFERENCES app.concept_tags(concept_tag_id) ON DELETE CASCADE,
+    PRIMARY KEY (interview_question_id, concept_tag_id)
+);
+
+-- NEW: Optional link questions to misconception tags they are intended to probe
+CREATE TABLE app.interview_question_misconception_tags (
+    interview_question_id  UUID NOT NULL REFERENCES app.interview_questions(interview_question_id) ON DELETE CASCADE,
+    misconception_tag_id   UUID NOT NULL REFERENCES app.misconception_tags(misconception_tag_id) ON DELETE CASCADE,
+    PRIMARY KEY (interview_question_id, misconception_tag_id)
+);
+
+--------------------------------------------------------------------------------
+-- Structured branching rules for each question using response categories
+--------------------------------------------------------------------------------
+
+CREATE TABLE app.interview_question_branches (
+    interview_question_branch_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    parent_question_id      UUID NOT NULL REFERENCES app.interview_questions(interview_question_id) ON DELETE CASCADE,
+
+    -- How the model classifies the student's response to the parent question
+    response_category       app.response_category NOT NULL,
+
+    -- Optional: narrow to a specific misconception tag
+    misconception_tag_id    UUID REFERENCES app.misconception_tags(misconception_tag_id) ON DELETE SET NULL,
+
+    -- What question to ask next (child). Can be NULL if this rule ends the interview sequence.
+    next_question_id        UUID REFERENCES app.interview_questions(interview_question_id) ON DELETE SET NULL,
+
+    -- Optional override prompt, if you want a tailored follow-up wording
+    follow_up_prompt_override TEXT,
+
+    -- Allow marking that this branch should terminate the interview after this step
+    terminate_interview     BOOLEAN NOT NULL DEFAULT FALSE,
+
+    order_index             INT NOT NULL DEFAULT 0, -- if multiple branches match, which to prefer
+
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_question_branch_category UNIQUE (parent_question_id, response_category, misconception_tag_id)
+);
+
+--------------------------------------------------------------------------------
+-- Interviews (simulation now, real students later)
+--------------------------------------------------------------------------------
+
 CREATE TABLE app.interviews (
     interview_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_plan_id UUID NOT NULL REFERENCES app.interview_plans(interview_plan_id) ON DELETE CASCADE,
@@ -116,7 +254,10 @@ CREATE TABLE app.criterion_evidence (
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+--------------------------------------------------------------------------------
 -- Indexing strategy: index all FKs and common filters
+--------------------------------------------------------------------------------
+
 CREATE INDEX IF NOT EXISTS idx_rubrics_teacher_id
     ON app.rubrics(teacher_id);
 
@@ -126,8 +267,38 @@ CREATE INDEX IF NOT EXISTS idx_rubric_criteria_rubric_id
 CREATE INDEX IF NOT EXISTS idx_interview_plans_rubric_id
     ON app.interview_plans(rubric_id);
 
+CREATE INDEX IF NOT EXISTS idx_interview_plans_subject_level
+    ON app.interview_plans(curriculum_subject, curriculum_level_band);
+
+CREATE INDEX IF NOT EXISTS idx_curriculum_descriptors_code
+    ON app.curriculum_descriptors(code);
+
+CREATE INDEX IF NOT EXISTS idx_interview_plan_curriculum_descriptors_plan_id
+    ON app.interview_plan_curriculum_descriptors(interview_plan_id);
+
+CREATE INDEX IF NOT EXISTS idx_interview_plan_curriculum_descriptors_descriptor_id
+    ON app.interview_plan_curriculum_descriptors(curriculum_descriptor_id);
+
+CREATE INDEX IF NOT EXISTS idx_concept_tags_descriptor_id
+    ON app.concept_tags(curriculum_descriptor_id);
+
+CREATE INDEX IF NOT EXISTS idx_misconception_tags_descriptor_id
+    ON app.misconception_tags(curriculum_descriptor_id);
+
 CREATE INDEX IF NOT EXISTS idx_interview_questions_plan_id
     ON app.interview_questions(interview_plan_id);
+
+CREATE INDEX IF NOT EXISTS idx_interview_question_concept_tags_question_id
+    ON app.interview_question_concept_tags(interview_question_id);
+
+CREATE INDEX IF NOT EXISTS idx_interview_question_concept_tags_concept_id
+    ON app.interview_question_concept_tags(concept_tag_id);
+
+CREATE INDEX IF NOT EXISTS idx_interview_question_branches_parent_id
+    ON app.interview_question_branches(parent_question_id);
+
+CREATE INDEX IF NOT EXISTS idx_interview_question_branches_next_question_id
+    ON app.interview_question_branches(next_question_id);
 
 CREATE INDEX IF NOT EXISTS idx_interviews_plan_id
     ON app.interviews(interview_plan_id);
