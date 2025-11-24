@@ -54,7 +54,27 @@ CREATE TABLE app.rubric_criteria (
 );
 
 --------------------------------------------------------------------------------
-Curriculum alignment tables (Victorian Curriculum / subject-agnostic)
+-- Interview plans
+--------------------------------------------------------------------------------
+
+CREATE TABLE app.interview_plans (
+    interview_plan_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rubric_id         UUID NOT NULL REFERENCES app.rubrics(rubric_id) ON DELETE CASCADE,
+    title             TEXT NOT NULL,
+    instructions      TEXT,
+    config            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status            app.interview_status NOT NULL DEFAULT 'draft',
+
+    -- High-level curriculum alignment summaries for quick filtering
+    curriculum_subject    TEXT,    -- denormalised from curriculum_descriptors.subject
+    curriculum_level_band TEXT,    -- denormalised from curriculum_descriptors.level_band
+    
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+--------------------------------------------------------------------------------
+-- Curriculum alignment tables (Victorian Curriculum / subject-agnostic)
 --------------------------------------------------------------------------------
 
 -- High-level curriculum descriptor, e.g. VCDTDI038, VCMNA350, VCELT458, etc.
@@ -82,27 +102,6 @@ CREATE TABLE app.interview_plan_curriculum_descriptors (
     primary_alignment         BOOLEAN NOT NULL DEFAULT FALSE, -- e.g. the main descriptor
     created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (interview_plan_id, curriculum_descriptor_id)
-);
-
---------------------------------------------------------------------------------
--- Interview plans
---------------------------------------------------------------------------------
-
--- Interview plans
-CREATE TABLE app.interview_plans (
-    interview_plan_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rubric_id         UUID NOT NULL REFERENCES app.rubrics(rubric_id) ON DELETE CASCADE,
-    title             TEXT NOT NULL,
-    instructions      TEXT,
-    config            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    status            app.interview_status NOT NULL DEFAULT 'draft',
-
-    -- High-level curriculum alignment summaries for quick filtering
-    curriculum_subject    TEXT,    -- denormalised from curriculum_descriptors.subject
-    curriculum_level_band TEXT,    -- denormalised from curriculum_descriptors.level_band
-    
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 --------------------------------------------------------------------------------
