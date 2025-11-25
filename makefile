@@ -9,7 +9,7 @@ IP      ?= 127.0.0.1
 PSQLURL ?= $(DB_TYPE)://$(DB_USER):$(DB_PWD)@$(IP):5432/$(DB_NAME)
 
 # sqlc config file
-SQLC_YAML ?= ./backend/sqlc.yaml
+SQLC_YAML ?= ./backend/schema/sqlc.yaml
 
 # Container & volume
 CONTAINER_NAME = test-db
