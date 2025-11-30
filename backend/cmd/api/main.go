@@ -19,7 +19,7 @@ func main() {
 	//Logging config
 	os.Setenv("APPENV", "development")
 
-	logger.Log.Info("Starting demo...")
+	logger.Log.Info("Starting API...")
 	logger.Log.Debug("Debugging active")
 
 	// Load .env file manually
