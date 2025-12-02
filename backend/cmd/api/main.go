@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
 	// Requires a fully qualified module path
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/logger"
 	"github.com/jackc/pgx/v5"
@@ -24,7 +26,7 @@ func main() {
 
 	// Load .env file manually
 	// Adjust path as needed because by default it looks in the current working directory for .env
-	err := godotenv.Load("../../../.env")
+	err := godotenv.Load("../.env")
 	if err != nil {
 		fmt.Println("No .env file found, using environment variables")
 		fmt.Printf("%s\n", err)
@@ -64,4 +66,15 @@ func main() {
 	// Example: Use queries for database operations
 	// You can now use queries to execute database queries
 	logger.Log.Infof("Database queries initialized successfully: %v", queries != nil)
+
+	deps := api.Dependencies{}
+	srv := api.NewServer(deps)
+
+	addr := ":8080"
+	log.Printf("listening on %s", addr)
+
+	if err := http.ListenAndServe(addr, srv); err != nil {
+		log.Fatal(err)
+	}
+
 }
