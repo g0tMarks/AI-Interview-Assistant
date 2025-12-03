@@ -65,7 +65,7 @@ func main() {
 
 	// Example: Use queries for database operations
 	// You can now use queries to execute database queries
-	logger.Log.Infof("Database queries initialized successfully: %v", queries != nil)
+	logger.Log.Infof("Database queries initialised successfully: %v", queries != nil)
 
 	deps := api.Dependencies{}
 	srv := api.NewServer(deps)
