@@ -17,8 +17,10 @@ func NewRouter(deps Dependencies) http.Handler {
 	// r.Use(middleware.Recoverer)
 
 	healthHandler := handlers.NewHealthHandler()
+	rubricHandler := handlers.NewRubricHandler(deps.Queries)
 
 	r.Get("/health", healthHandler.Health)
+	r.Post("/rubrics", rubricHandler.CreateRubric)
 
 	return r
 }
