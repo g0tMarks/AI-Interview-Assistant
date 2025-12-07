@@ -67,7 +67,9 @@ func main() {
 	// You can now use queries to execute database queries
 	logger.Log.Infof("Database queries initialised successfully: %v", queries != nil)
 
-	deps := api.Dependencies{}
+	deps := api.Dependencies{
+		Queries: queries,
+	}
 	srv := api.NewServer(deps)
 
 	addr := ":8080"
