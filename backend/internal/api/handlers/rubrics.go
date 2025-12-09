@@ -79,7 +79,8 @@ func (h *RubricHandler) CreateRubric(w http.ResponseWriter, r *http.Request) {
 		RawText:     req.RawText,
 	})
 	if err != nil {
-		http.Error(w, "failed to save rubric", http.StatusInternalServerError)
+		// Log the actual error for debugging (in production, be more careful about exposing errors)
+		http.Error(w, "failed to save rubric: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

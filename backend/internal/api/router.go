@@ -18,9 +18,11 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	healthHandler := handlers.NewHealthHandler()
 	rubricHandler := handlers.NewRubricHandler(deps.Queries)
+	teacherHandler := handlers.NewTeacherHandler(deps.Queries)
 
 	r.Get("/health", healthHandler.Health)
 	r.Post("/rubrics", rubricHandler.CreateRubric)
+	r.Post("/teachers/register", teacherHandler.RegisterTeacher)
 
 	return r
 }
