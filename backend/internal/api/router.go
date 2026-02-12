@@ -19,10 +19,16 @@ func NewRouter(deps Dependencies) http.Handler {
 	healthHandler := handlers.NewHealthHandler()
 	rubricHandler := handlers.NewRubricHandler(deps.Queries)
 	teacherHandler := handlers.NewTeacherHandler(deps.Queries)
+	templateHandler := handlers.NewInterviewTemplateHandler(deps.Queries, deps.LLMService)
+	interviewHandler := handlers.NewInterviewHandler(deps.Queries)
 
 	r.Get("/health", healthHandler.Health)
 	r.Post("/rubrics", rubricHandler.CreateRubric)
+	r.Get("/rubrics", rubricHandler.ListRubrics)
 	r.Post("/teachers/register", teacherHandler.RegisterTeacher)
+	r.Post("/interview-templates", templateHandler.CreateInterviewTemplate)
+	r.Post("/interviews", interviewHandler.CreateInterview)
+	r.Get("/interviews/{id}", interviewHandler.GetInterview)
 
 	return r
 }

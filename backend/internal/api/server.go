@@ -5,12 +5,14 @@ import (
 	"net/http"
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
 )
 
 // Dependencies holds things your handlers need (DB, logger, config, etc.).
 // Start empty for the Hello World example and add fields as you go.
 type Dependencies struct {
-	Queries *db.Queries
+	Queries   *db.Queries
+	LLMService services.LLMService
 	// Logger *slog.Logger
 }
 

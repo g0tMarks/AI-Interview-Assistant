@@ -12,6 +12,7 @@ import (
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/logger"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 	//If using an underscore, it imports the package as well as runs its init() function
@@ -67,8 +68,13 @@ func main() {
 	// You can now use queries to execute database queries
 	logger.Log.Infof("Database queries initialised successfully: %v", queries != nil)
 
+	// Initialize LLM service
+	llmService := services.NewOpenAIService()
+	logger.Log.Info("LLM service initialized")
+
 	deps := api.Dependencies{
-		Queries: queries,
+		Queries:    queries,
+		LLMService: llmService,
 	}
 	srv := api.NewServer(deps)
 

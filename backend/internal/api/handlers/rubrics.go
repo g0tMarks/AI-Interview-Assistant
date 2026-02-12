@@ -110,3 +110,63 @@ func (h *RubricHandler) CreateRubric(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
 }
+
+func (h *RubricHandler) ListRubrics(w http.ResponseWriter, r *http.Request) {
+	// Extract teacherId from query parameter
+	teacherIdStr := r.URL.Query().Get("teacherId")
+	if teacherIdStr == "" {
+		http.Error(w, "teacherId is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate UUID format
+	teacherID, err := uuid.Parse(teacherIdStr)
+	if err != nil {
+		http.Error(w, "invalid teacherId format", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Convert to pgtype.UUID
+	teacherIDPgtype := pgtype.UUID{
+		Bytes: teacherID,
+		Valid: true,
+	}
+
+	// Query database
+	rubrics, err := h.q.ListRubricsByTeacher(ctx, teacherIDPgtype)
+	if err != nil {
+		http.Error(w, "failed to retrieve rubrics", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to response format
+	resp := make([]RubricResponse, len(rubrics))
+	for i, rubric := range rubrics {
+		var rubricID uuid.UUID
+		if rubric.RubricID.Valid {
+			rubricID = rubric.RubricID.Bytes
+		}
+
+		var teacherIDResp uuid.UUID
+		if rubric.TeacherID.Valid {
+			teacherIDResp = rubric.TeacherID.Bytes
+		}
+
+		resp[i] = RubricResponse{
+			RubricID:    rubricID,
+			TeacherID:   teacherIDResp,
+			Title:       rubric.Title,
+			Description: rubric.Description.String,
+			RawText:     rubric.RawText,
+			IsEnabled:   rubric.IsEnabled,
+			CreatedAt:   rubric.CreatedAt,
+			UpdatedAt:   rubric.UpdatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}

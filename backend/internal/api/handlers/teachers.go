@@ -134,4 +134,3 @@ func (h *TeacherHandler) RegisterTeacher(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
 }
-
