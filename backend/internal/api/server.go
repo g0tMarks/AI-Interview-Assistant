@@ -13,6 +13,7 @@ import (
 type Dependencies struct {
 	Queries   *db.Queries
 	LLMService services.LLMService
+	JWTSecret  string // used for signing/validating student JWTs (e.g. from JWT_SECRET env)
 	// Logger *slog.Logger
 }
 

@@ -10,8 +10,8 @@
 ### Already in place
 | Area | Status |
 |------|--------|
-| **Schema** | `teachers`, `rubrics`, `rubric_criteria`, `interview_plans`, `interviews`, `interview_messages`, `interview_summaries`, `criterion_evidence`, curriculum/concept/misconception tables |
-| **SQLC** | Configured; generated code for all existing tables (no students/classes/roster) |
+| **Schema** | `teachers`, `students`, `classes`, `roster`, `rubrics`, `rubric_criteria`, `interview_plans`, `interviews`, `interview_messages`, `interview_summaries`, `criterion_evidence`, curriculum/concept/misconception tables |
+| **SQLC** | Configured; generated code for all existing tables including students/classes/roster |
 | **Rubrics** | POST /rubrics, GET /rubrics?teacherId=uuid |
 | **Teachers** | POST /teachers/register (no login/JWT) |
 | **Interview templates** | POST /interview-templates (LLM-generated instructions from rubric) |
@@ -19,10 +19,10 @@
 | **interview_messages** | **Table + SQLC** (`CreateInterviewMessage`, `ListMessagesByInterview`) — **no HTTP endpoints** |
 | **Summaries / criterion_evidence** | **Tables + SQLC** (Create/Get/Update summary, criterion_evidence) — **no HTTP endpoints** |
 | **Integration test** | Teacher → rubric → template → interview → 2 messages via DB → GET interview; **does not** drive /next, engine, or results API |
+| **Students / classes / roster** | CRUD handlers and routes (POST/GET/PATCH students, classes, roster) |
+| **Student auth + JWT** | POST /auth/student/login (class code + email → JWT); RequireStudentAuth middleware; GET /student/me (protected) |
 
 ### Not present (from your list)
-- **students / classes / roster** tables, SQLC, or CRUD
-- **Student auth** (magic link or class code) or **JWT middleware**
 - **Uploads** or **file storage abstraction**
 - **Text extraction** (PDF/DOCX → raw text)
 - **Rubric parser** (raw → structured JSON) or **schema validation**
@@ -65,15 +65,19 @@ Do these in sequence so each step has the right foundation.
 
 ## 3. What to Do Next (Concrete)
 
-**Immediate next step:** **#1 – Students / classes / roster + SQLC + CRUD** — ✅ **Done**
+**Step #1 – Students / classes / roster + SQLC + CRUD** — ✅ **Done**
 
-1. **Schema** (in `backend/schema/schema.sql`): Added `app.students`, `app.classes`, `app.roster` and indexes.
-2. **SQLC**: Added `queries/students.sql`, `queries/classes.sql`, `queries/roster.sql`; run `sqlc generate` from `backend/schema`.
-3. **Handlers**: `handlers/students.go`, `handlers/classes.go`, `handlers/roster.go` with full CRUD; routes registered in `router.go`.
+**Step #2 – Student auth MVP + JWT middleware** — ✅ **Done**
 
-**Applying the schema:** If the DB was created from an older `schema.sql`, run the new table/index statements (the block for students, classes, roster and their indexes) against your database, or recreate from the full `schema.sql`.
+1. **Auth package** (`backend/internal/auth/`): `jwt.go` (IssueStudentToken, ValidateStudentToken, StudentClaims), `context.go` (WithStudentID, StudentIDFromContext).
+2. **Middleware** (`backend/internal/api/middleware/auth.go`): `RequireStudentAuth(jwtSecret)` — validates `Authorization: Bearer <token>` and sets student ID on context.
+3. **Auth handler** (`backend/internal/api/handlers/auth.go`): `POST /auth/student/login` — body `{ "classCode", "email" }`; student must exist and be on class roster; returns `{ "token": "<jwt>" }`.
+4. **Protected route**: `GET /student/me` — requires valid student JWT; returns current student profile.
+5. **Config**: `JWT_SECRET` env (defaults to dev placeholder if unset). Dependencies include `JWTSecret`.
 
-After that, proceed in order: **#2** (student auth + JWT), then **#3** (uploads), and so on.
+**Usage:** Set `JWT_SECRET` in production. Student flow: teacher creates class (gets `class_code`), adds students to roster; student calls POST /auth/student/login with class code + email, then uses the token in `Authorization: Bearer <token>` for GET /student/me and future student routes.
+
+After that, proceed in order: **#3** (uploads), then **#4**, and so on.
 
 ---
 
@@ -94,6 +98,7 @@ Once students and roster exist, consider:
 | Queries | `backend/internal/db/queries/*.sql` |
 | Router | `backend/internal/api/router.go` |
 | Server deps | `backend/internal/api/server.go` |
+| Student auth | `backend/internal/auth/`, `backend/internal/api/middleware/auth.go`, `backend/internal/api/handlers/auth.go` |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

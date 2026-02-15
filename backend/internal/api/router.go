@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api/handlers"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -24,6 +25,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	studentHandler := handlers.NewStudentHandler(deps.Queries)
 	classHandler := handlers.NewClassHandler(deps.Queries)
 	rosterHandler := handlers.NewRosterHandler(deps.Queries)
+	authHandler := handlers.NewAuthHandler(deps.Queries, deps.JWTSecret)
 
 	r.Get("/health", healthHandler.Health)
 	r.Post("/rubrics", rubricHandler.CreateRubric)
@@ -33,7 +35,16 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Post("/interviews", interviewHandler.CreateInterview)
 	r.Get("/interviews/{id}", interviewHandler.GetInterview)
 
-	// Students
+	// Student auth (class code + email → JWT)
+	r.Post("/auth/student/login", authHandler.StudentLogin)
+
+	// Student-facing routes (require valid student JWT)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequireStudentAuth(deps.JWTSecret))
+		r.Get("/student/me", studentHandler.GetMe)
+	})
+
+	// Students (admin/teacher CRUD; unauthenticated for now)
 	r.Post("/students", studentHandler.CreateStudent)
 	r.Get("/students", studentHandler.ListStudents)
 	r.Get("/students/{id}", studentHandler.GetStudent)

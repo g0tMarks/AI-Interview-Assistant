@@ -72,9 +72,16 @@ func main() {
 	llmService := services.NewOpenAIService()
 	logger.Log.Info("LLM service initialized")
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-change-in-production"
+		logger.Log.Warn("JWT_SECRET not set; using default (do not use in production)")
+	}
+
 	deps := api.Dependencies{
 		Queries:    queries,
 		LLMService: llmService,
+		JWTSecret:  jwtSecret,
 	}
 	srv := api.NewServer(deps)
 

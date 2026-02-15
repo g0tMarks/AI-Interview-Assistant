@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/auth"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/validation"
 )
@@ -93,6 +94,28 @@ func (h *StudentHandler) CreateStudent(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(studentToResponse(student))
+}
+
+// GetMe returns the currently authenticated student (from JWT). Requires RequireStudentAuth middleware.
+func (h *StudentHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	studentID, ok := auth.StudentIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ctx := r.Context()
+	pid := pgtype.UUID{Bytes: studentID, Valid: true}
+	student, err := h.q.GetStudentByID(ctx, pid)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "student not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get student", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(studentToResponse(student))
 }
 
