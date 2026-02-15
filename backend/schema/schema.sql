@@ -28,6 +28,33 @@ CREATE TABLE app.teachers (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Students (identity for interview takers; may join classes via roster)
+CREATE TABLE app.students (
+    student_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email        TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Classes (teacher-owned; class_code used for student join / auth)
+CREATE TABLE app.classes (
+    class_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    teacher_id  UUID NOT NULL REFERENCES app.teachers(teacher_id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    class_code  TEXT NOT NULL UNIQUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Roster (many-to-many: students in classes)
+CREATE TABLE app.roster (
+    class_id   UUID NOT NULL REFERENCES app.classes(class_id) ON DELETE CASCADE,
+    student_id UUID NOT NULL REFERENCES app.students(student_id) ON DELETE CASCADE,
+    joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (class_id, student_id)
+);
+
 -- Rubrics
 CREATE TABLE app.rubrics (
     rubric_id       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -255,6 +282,21 @@ CREATE TABLE app.criterion_evidence (
 --------------------------------------------------------------------------------
 -- Indexing strategy: index all FKs and common filters
 --------------------------------------------------------------------------------
+
+CREATE INDEX IF NOT EXISTS idx_students_email
+    ON app.students(email);
+
+CREATE INDEX IF NOT EXISTS idx_classes_teacher_id
+    ON app.classes(teacher_id);
+
+CREATE INDEX IF NOT EXISTS idx_classes_class_code
+    ON app.classes(class_code);
+
+CREATE INDEX IF NOT EXISTS idx_roster_class_id
+    ON app.roster(class_id);
+
+CREATE INDEX IF NOT EXISTS idx_roster_student_id
+    ON app.roster(student_id);
 
 CREATE INDEX IF NOT EXISTS idx_rubrics_teacher_id
     ON app.rubrics(teacher_id);

@@ -141,6 +141,15 @@ func (ns NullAppResponseCategory) Value() (driver.Value, error) {
 	return string(ns.AppResponseCategory), nil
 }
 
+type AppClass struct {
+	ClassID   pgtype.UUID        `db:"class_id" json:"classId"`
+	TeacherID pgtype.UUID        `db:"teacher_id" json:"teacherId"`
+	Name      string             `db:"name" json:"name"`
+	ClassCode string             `db:"class_code" json:"classCode"`
+	CreatedAt pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
 type AppConceptTag struct {
 	ConceptTagID           pgtype.UUID        `db:"concept_tag_id" json:"conceptTagId"`
 	Name                   string             `db:"name" json:"name"`
@@ -275,6 +284,12 @@ type AppMisconceptionTag struct {
 	UpdatedAt              pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }
 
+type AppRoster struct {
+	ClassID   pgtype.UUID        `db:"class_id" json:"classId"`
+	StudentID pgtype.UUID        `db:"student_id" json:"studentId"`
+	JoinedAt  pgtype.Timestamptz `db:"joined_at" json:"joinedAt"`
+}
+
 type AppRubric struct {
 	RubricID    pgtype.UUID        `db:"rubric_id" json:"rubricId"`
 	TeacherID   pgtype.UUID        `db:"teacher_id" json:"teacherId"`
@@ -296,6 +311,14 @@ type AppRubricCriterium struct {
 	Levels            []byte             `db:"levels" json:"levels"`
 	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"createdAt"`
 	UpdatedAt         pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type AppStudent struct {
+	StudentID   pgtype.UUID        `db:"student_id" json:"studentId"`
+	Email       string             `db:"email" json:"email"`
+	DisplayName string             `db:"display_name" json:"displayName"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }
 
 type AppTeacher struct {
