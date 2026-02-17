@@ -6,14 +6,17 @@ import (
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/storage"
 )
 
 // Dependencies holds things your handlers need (DB, logger, config, etc.).
 // Start empty for the Hello World example and add fields as you go.
 type Dependencies struct {
-	Queries   *db.Queries
-	LLMService services.LLMService
-	JWTSecret  string // used for signing/validating student JWTs (e.g. from JWT_SECRET env)
+	Queries         *db.Queries
+	LLMService      services.LLMService
+	JWTSecret       string // used for signing/validating student JWTs (e.g. from JWT_SECRET env)
+	Storage         storage.Store
+	UploadsMaxBytes int64 // max upload size for multipart uploads (bytes); if 0, handler default applies
 	// Logger *slog.Logger
 }
 

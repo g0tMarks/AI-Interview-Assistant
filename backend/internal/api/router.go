@@ -26,6 +26,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	classHandler := handlers.NewClassHandler(deps.Queries)
 	rosterHandler := handlers.NewRosterHandler(deps.Queries)
 	authHandler := handlers.NewAuthHandler(deps.Queries, deps.JWTSecret)
+	uploadHandler := handlers.NewUploadHandler(deps.Storage, deps.UploadsMaxBytes)
 
 	r.Get("/health", healthHandler.Health)
 	r.Post("/rubrics", rubricHandler.CreateRubric)
@@ -34,6 +35,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Post("/interview-templates", templateHandler.CreateInterviewTemplate)
 	r.Post("/interviews", interviewHandler.CreateInterview)
 	r.Get("/interviews/{id}", interviewHandler.GetInterview)
+	r.Post("/uploads", uploadHandler.Upload)
+	r.Get("/uploads/{key}", uploadHandler.Download)
 
 	// Student auth (class code + email → JWT)
 	r.Post("/auth/student/login", authHandler.StudentLogin)

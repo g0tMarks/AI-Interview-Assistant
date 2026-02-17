@@ -21,9 +21,9 @@
 | **Integration test** | Teacher → rubric → template → interview → 2 messages via DB → GET interview; **does not** drive /next, engine, or results API |
 | **Students / classes / roster** | CRUD handlers and routes (POST/GET/PATCH students, classes, roster) |
 | **Student auth + JWT** | POST /auth/student/login (class code + email → JWT); RequireStudentAuth middleware; GET /student/me (protected) |
+| **Uploads (local storage)** | POST /uploads (multipart file); GET /uploads/{key} (download). Local disk store under `UPLOADS_DIR`. |
 
 ### Not present (from your list)
-- **Uploads** or **file storage abstraction**
 - **Text extraction** (PDF/DOCX → raw text)
 - **Rubric parser** (raw → structured JSON) or **schema validation**
 - **Rubric version editing** (teacher corrects parser) — no UpdateRubric / PATCH rubric
@@ -32,6 +32,7 @@
 - **Final evaluation + results endpoint** and stored scoring JSON API
 - **Golden-path integration test** covering full flow (through /next and results)
 - **Rate limits** or **prompt injection hardening**
+- **Bulk student roster upload (.xlsx)** — teacher uploads spreadsheet (first name, last name, email) to add students to a class roster
 - **Bulk interview creation** for a class
 - **Results listing/export** for teacher
 - **Voice (push-to-talk) + STT**
@@ -48,18 +49,19 @@ Do these in sequence so each step has the right foundation.
 | **1** | **Students / classes / roster tables + SQLC + CRUD** | Add `app.students`, `app.classes`, `app.roster` (e.g. class_id, student_id, role). Run sqlc generate; add queries and CRUD handlers. Optionally link `app.interviews.student_id` to `app.students` later. |
 | **2** | **Student auth MVP (magic link or class code) + JWT middleware** | Magic link (email token) or class-code flow; issue JWT. Add middleware to validate JWT and set identity on context. Protect student-facing routes. |
 | **3** | **Uploads + file storage abstraction** | Multipart upload endpoint(s); abstraction (e.g. interface) for store (local/S3). Used by rubric file upload and later by other assets. |
-| **4** | **Text extraction for PDF/DOCX → raw text** | Use uploads + storage; extract text; store in `rubrics.raw_text` (or temp) and return in API. Library: e.g. unidoc (PDF), gooxml or similar (DOCX). |
-| **5** | **Rubric parser (raw → structured JSON) + schema validation** | Parse raw text → criteria (name, description, weight, levels). Define JSON schema; validate output. Can be LLM-based or rule-based; store result as rubric_criteria. |
-| **6** | **Rubric version editing endpoint** | PATCH /rubrics/{id} and/or PATCH /rubrics/{id}/criteria (or replace criteria). Teacher can fix parser mistakes. Requires UpdateRubric / update criteria in SQLC if not present. |
-| **7** | **Interview_messages table + endpoints** | Table and SQLC exist. Add: POST /interviews/{id}/messages, GET /interviews/{id}/messages. Used by engine and frontend. |
-| **8** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); optional LLM for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
-| **9** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
-| **10** | **Golden-path integration test** | Single test: create teacher → (optional class/student) → rubric → template → interview → call /next until done → trigger evaluation → GET results; assert status, summary, and scoring shape. |
-| **11** | **Rate limits + prompt injection hardening** | Global or per-route rate limits; sanitize/validate user content before sending to LLM and in storage. |
-| **12** | **Bulk interview creation for a class** | Endpoint (e.g. POST /classes/{id}/interviews/bulk) using plan + roster to create N interviews (one per student or selected list). Depends on classes/roster. |
-| **13** | **Results listing/export for teacher** | List results by teacher/class/interview plan; export (CSV/JSON). Depends on results endpoint and optionally on classes. |
-| **14** | **Voice (push-to-talk) + STT** | Push-to-talk UI; send audio to STT; feed transcript into interview (e.g. as user messages). Backend: STT integration and possibly WebSocket or chunked HTTP. |
-| **15** | **Microsoft Entra OIDC SSO** | Replace or complement teacher (and optionally student) auth with Entra OIDC; map identity to teachers (and students if applicable). |
+| **4** | **Bulk student roster upload (.xlsx)** | Teacher uploads .xlsx with columns: first name, last name, email. Parse file (e.g. excelize), create students or match by email, add all to specified class roster. Endpoint e.g. POST /classes/{id}/roster/upload. Depends on uploads (multipart) and classes/roster. |
+| **5** | **Text extraction for PDF/DOCX → raw text** | Use uploads + storage; extract text; store in `rubrics.raw_text` (or temp) and return in API. Library: e.g. unidoc (PDF), gooxml or similar (DOCX). |
+| **6** | **Rubric parser (raw → structured JSON) + schema validation** | Parse raw text → criteria (name, description, weight, levels). Define JSON schema; validate output. Can be LLM-based or rule-based; store result as rubric_criteria. |
+| **7** | **Rubric version editing endpoint** | PATCH /rubrics/{id} and/or PATCH /rubrics/{id}/criteria (or replace criteria). Teacher can fix parser mistakes. Requires UpdateRubric / update criteria in SQLC if not present. |
+| **8** | **Interview_messages table + endpoints** | Table and SQLC exist. Add: POST /interviews/{id}/messages, GET /interviews/{id}/messages. Used by engine and frontend. |
+| **9** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); optional LLM for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
+| **10** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
+| **11** | **Golden-path integration test** | Single test: create teacher → (optional class/student) → rubric → template → interview → call /next until done → trigger evaluation → GET results; assert status, summary, and scoring shape. |
+| **12** | **Rate limits + prompt injection hardening** | Global or per-route rate limits; sanitize/validate user content before sending to LLM and in storage. |
+| **13** | **Bulk interview creation for a class** | Endpoint (e.g. POST /classes/{id}/interviews/bulk) using plan + roster to create N interviews (one per student or selected list). Depends on classes/roster. |
+| **14** | **Results listing/export for teacher** | List results by teacher/class/interview plan; export (CSV/JSON). Depends on results endpoint and optionally on classes. |
+| **15** | **Voice (push-to-talk) + STT** | Push-to-talk UI; send audio to STT; feed transcript into interview (e.g. as user messages). Backend: STT integration and possibly WebSocket or chunked HTTP. |
+| **16** | **Microsoft Entra OIDC SSO** | Replace or complement teacher (and optionally student) auth with Entra OIDC; map identity to teachers (and students if applicable). |
 
 ---
 
@@ -77,7 +79,20 @@ Do these in sequence so each step has the right foundation.
 
 **Usage:** Set `JWT_SECRET` in production. Student flow: teacher creates class (gets `class_code`), adds students to roster; student calls POST /auth/student/login with class code + email, then uses the token in `Authorization: Bearer <token>` for GET /student/me and future student routes.
 
-After that, proceed in order: **#3** (uploads), then **#4**, and so on.
+**Step #3 – Uploads + file storage abstraction** — ✅ **Done**
+
+1. **Storage package** (`backend/internal/storage/`): `Store` interface + `LocalStore` implementation (writes `<key>.data` + `<key>.json`).
+2. **Endpoints**: `POST /uploads` (multipart field `file`), `GET /uploads/{key}` (download).
+3. **Config**: `UPLOADS_DIR` (default `./uploads`), `UPLOADS_MAX_BYTES` (default 25 MiB), injected via `api.Dependencies`.
+4. **API test**: `backend/api_test/test-uploads.sh`.
+
+After that, proceed in order: **#4** (bulk student roster upload), then **#5** (text extraction), and so on.
+
+**Step #4 – Bulk student roster upload (.xlsx)** (when you reach it):
+- Endpoint: e.g. `POST /classes/{id}/roster/upload` (multipart form with .xlsx file).
+- Expected .xlsx columns: first name, last name, email (exact names or configurable).
+- For each row: create student (email + display name from first/last) or get existing by email; add to roster for the class. Handle duplicates (e.g. skip or update).
+- Library: e.g. [excelize](https://github.com/xuri/excelize) for Go. Return summary (created count, added to roster count, errors/skipped).
 
 ---
 

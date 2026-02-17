@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	// Requires a fully qualified module path
@@ -13,6 +14,7 @@ import (
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/logger"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 	//If using an underscore, it imports the package as well as runs its init() function
@@ -78,10 +80,27 @@ func main() {
 		logger.Log.Warn("JWT_SECRET not set; using default (do not use in production)")
 	}
 
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "uploads"
+		logger.Log.Warn("UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)")
+	}
+	uploadsMaxBytes := int64(25 << 20) // 25 MiB
+	if v := os.Getenv("UPLOADS_MAX_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			uploadsMaxBytes = n
+		} else {
+			logger.Log.Warnf("Invalid UPLOADS_MAX_BYTES=%q; using default", v)
+		}
+	}
+	store := storage.NewLocalStore(uploadsDir)
+
 	deps := api.Dependencies{
-		Queries:    queries,
-		LLMService: llmService,
-		JWTSecret:  jwtSecret,
+		Queries:         queries,
+		LLMService:      llmService,
+		JWTSecret:       jwtSecret,
+		Storage:         store,
+		UploadsMaxBytes: uploadsMaxBytes,
 	}
 	srv := api.NewServer(deps)
 

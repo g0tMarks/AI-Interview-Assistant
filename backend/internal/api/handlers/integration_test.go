@@ -23,6 +23,8 @@ import (
 
 // setupTestDB initializes a database connection for testing
 func setupTestDB(t *testing.T) (*pgx.Conn, *db.Queries) {
+	requireDB := os.Getenv("REQUIRE_TEST_DB") == "1"
+
 	dbURI := os.Getenv("TEST_DATABASE_URL")
 	if dbURI == "" {
 		dbURI = os.Getenv("DATABASE_URL")
@@ -36,13 +38,19 @@ func setupTestDB(t *testing.T) (*pgx.Conn, *db.Queries) {
 
 	conn, err := pgx.Connect(ctx, dbURI)
 	if err != nil {
-		t.Fatalf("Failed to connect to test database: %v", err)
+		if requireDB {
+			t.Fatalf("Failed to connect to test database: %v", err)
+		}
+		t.Skipf("Skipping integration test (test DB unavailable): %v", err)
 	}
 
 	// Ping to verify connection
 	if err := conn.Ping(ctx); err != nil {
 		conn.Close(ctx)
-		t.Fatalf("Failed to ping test database: %v", err)
+		if requireDB {
+			t.Fatalf("Failed to ping test database: %v", err)
+		}
+		t.Skipf("Skipping integration test (test DB unavailable): %v", err)
 	}
 
 	queries := db.New(conn)
