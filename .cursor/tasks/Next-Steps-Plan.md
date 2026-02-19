@@ -15,7 +15,7 @@
 | **Rubrics** | POST /rubrics, GET /rubrics?teacherId=uuid |
 | **Teachers** | POST /teachers/register (no login/JWT) |
 | **Interview templates** | POST /interview-templates (LLM-generated instructions from rubric) |
-| **Interviews** | POST /interviews, GET /interviews/{id} (uses `student_name` text only; no `student_id`) |
+| **Interviews** | POST /interviews, GET /interviews/{id} (supports `student_id` linked to `app.students`; `student_name` remains optional display override) |
 | **interview_messages** | **Table + SQLC** (`CreateInterviewMessage`, `ListMessagesByInterview`) — **no HTTP endpoints** |
 | **Summaries / criterion_evidence** | **Tables + SQLC** (Create/Get/Update summary, criterion_evidence) — **no HTTP endpoints** |
 | **Integration test** | Teacher → rubric → template → interview → 2 messages via DB → GET interview; **does not** drive /next, engine, or results API |
@@ -23,9 +23,9 @@
 | **Student auth + JWT** | POST /auth/student/login (class code + email → JWT); RequireStudentAuth middleware; GET /student/me (protected) |
 | **Uploads (local storage)** | POST /uploads (multipart file); GET /uploads/{key} (download). Local disk store under `UPLOADS_DIR`. |
 | **Bulk student roster upload (.xlsx)** | POST /classes/{id}/roster/upload (multipart form with .xlsx file). Parses Excel with first name, last name, email columns; creates students or matches by email; adds to roster. Returns summary (created, added, skipped, errors). Uses excelize library. |
+| **Text extraction** (PDF/DOCX → raw text) | POST /rubrics/upload (multipart form with PDF/DOCX file). Extracts text using unidoc (PDF) and unioffice (DOCX); stores in `rubrics.raw_text` and returns in API response. |
 
 ### Not present (from your list)
-- **Text extraction** (PDF/DOCX → raw text)
 - **Rubric parser** (raw → structured JSON) or **schema validation**
 - **Rubric version editing** (teacher corrects parser) — no UpdateRubric / PATCH rubric
 - **Interview messages HTTP API** (POST/GET messages for an interview)
@@ -50,7 +50,7 @@ Do these in sequence so each step has the right foundation.
 | **2** | **Student auth MVP (magic link or class code) + JWT middleware** | Magic link (email token) or class-code flow; issue JWT. Add middleware to validate JWT and set identity on context. Protect student-facing routes. |
 | **3** | **Uploads + file storage abstraction** | Multipart upload endpoint(s); abstraction (e.g. interface) for store (local/S3). Used by rubric file upload and later by other assets. |
 | **4** | **Bulk student roster upload (.xlsx)** | Teacher uploads .xlsx with columns: first name, last name, email. Parse file (e.g. excelize), create students or match by email, add all to specified class roster. Endpoint e.g. POST /classes/{id}/roster/upload. Depends on uploads (multipart) and classes/roster. |
-| **5** | **Text extraction for PDF/DOCX → raw text** | Use uploads + storage; extract text; store in `rubrics.raw_text` (or temp) and return in API. Library: e.g. unidoc (PDF), gooxml or similar (DOCX). |
+| **5** | **Text extraction for PDF/DOCX → raw text** | ✅ **Done** — Use uploads + storage; extract text; store in `rubrics.raw_text` (or temp) and return in API. Library: e.g. unidoc (PDF), gooxml or similar (DOCX). |
 | **6** | **Rubric parser (raw → structured JSON) + schema validation** | Parse raw text → criteria (name, description, weight, levels). Define JSON schema; validate output. Can be LLM-based or rule-based; store result as rubric_criteria. |
 | **7** | **Rubric version editing endpoint** | PATCH /rubrics/{id} and/or PATCH /rubrics/{id}/criteria (or replace criteria). Teacher can fix parser mistakes. Requires UpdateRubric / update criteria in SQLC if not present. |
 | **8** | **Interview_messages table + endpoints** | Table and SQLC exist. Add: POST /interviews/{id}/messages, GET /interviews/{id}/messages. Used by engine and frontend. |
@@ -103,11 +103,51 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 
 ---
 
-## 4. Optional: Link interviews to students
+## 4. Link interviews to students — ✅ **Done**
 
-Once students and roster exist, consider:
-- Add `student_id UUID REFERENCES app.students(student_id)` to `app.interviews` (nullable for backward compatibility).
-- When creating an interview for a class, set `student_id` from roster; keep `student_name` as optional display override.
+**Completed**: 2025-02-19
+
+1. **Schema update** (`backend/schema/schema.sql`): Added `student_id UUID REFERENCES app.students(student_id) ON DELETE SET NULL` to `app.interviews` table (nullable for backward compatibility).
+
+2. **SQL queries** (`backend/internal/db/queries/interviews.sql`): Updated `CreateInterview` query to include `student_id` in INSERT statement.
+
+3. **Generated code**: Regenerated sqlc code; `AppInterview` model and queries now include `student_id` field.
+
+4. **API handler** (`backend/internal/api/handlers/interviews.go`):
+   - Updated `CreateInterviewRequest` to accept optional `classId` and `studentId` fields.
+   - Added logic to verify student is in class roster when both `classId` and `studentId` are provided.
+   - Updated `InterviewResponse` to include `studentId` field.
+   - Updated both `CreateInterview` and `GetInterview` handlers to handle `studentId` in responses.
+
+**Behavior**:
+- If both `classId` and `studentId` are provided: verifies student is in the class roster before creating interview.
+- If only `studentId` is provided: uses it directly (no roster verification).
+- If neither is provided: `student_id` remains null (backward compatible).
+- `studentName` remains optional as a display override.
+
+**Usage**: When creating an interview for a class, include both `classId` and `studentId` in the request body. The API will verify the student is enrolled in the class before creating the interview.
+
+**Step #5 – Text extraction for PDF/DOCX → raw text** — ✅ **Done**
+
+**Completed**: 2025-02-19
+
+1. **Dependencies**: Added `github.com/unidoc/unipdf/v3` (PDF extraction) and `github.com/unidoc/unioffice` (DOCX extraction) to go.mod.
+
+2. **Extraction package** (`backend/internal/extraction/extraction.go`):
+   - `ExtractTextFromPDF()` - Extracts text from PDF files using unipdf extractor
+   - `ExtractTextFromDOCX()` - Extracts text from DOCX files using unioffice document reader
+   - `ExtractText()` - Main function that automatically detects format (PDF/DOCX) based on content type or filename and extracts text
+   - Error handling for unsupported formats and empty documents
+
+3. **API handler** (`backend/internal/api/handlers/rubrics.go`):
+   - Added `UploadRubricFile` method that accepts multipart form data
+   - Accepts: `file` (PDF/DOCX), `teacherId` (required), `title` (optional, defaults to filename), `description` (optional)
+   - Extracts text from uploaded file and creates rubric with extracted text stored in `rubrics.raw_text`
+   - Returns created rubric with extracted text in response
+
+4. **Route**: `POST /rubrics/upload` registered in router.
+
+**Usage**: POST multipart form to `/rubrics/upload` with `file` field containing PDF or DOCX file, `teacherId`, and optional `title` and `description`. The API extracts text, creates a rubric, and returns it with the extracted text in `rawText` field.
 
 ---
 
@@ -122,6 +162,7 @@ Once students and roster exist, consider:
 | Server deps | `backend/internal/api/server.go` |
 | Student auth | `backend/internal/auth/`, `backend/internal/api/middleware/auth.go`, `backend/internal/api/handlers/auth.go` |
 | Roster upload | `backend/internal/api/handlers/roster.go` (UploadRoster method), `backend/api_test/test-roster-upload.sh` |
+| Text extraction | `backend/internal/extraction/extraction.go`, `backend/internal/api/handlers/rubrics.go` (UploadRubricFile method) |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

@@ -30,6 +30,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	r.Get("/health", healthHandler.Health)
 	r.Post("/rubrics", rubricHandler.CreateRubric)
+	r.Post("/rubrics/upload", rubricHandler.UploadRubricFile)
 	r.Get("/rubrics", rubricHandler.ListRubrics)
 	r.Post("/teachers/register", teacherHandler.RegisterTeacher)
 	r.Post("/interview-templates", templateHandler.CreateInterviewTemplate)
