@@ -22,6 +22,7 @@
 | **Students / classes / roster** | CRUD handlers and routes (POST/GET/PATCH students, classes, roster) |
 | **Student auth + JWT** | POST /auth/student/login (class code + email → JWT); RequireStudentAuth middleware; GET /student/me (protected) |
 | **Uploads (local storage)** | POST /uploads (multipart file); GET /uploads/{key} (download). Local disk store under `UPLOADS_DIR`. |
+| **Bulk student roster upload (.xlsx)** | POST /classes/{id}/roster/upload (multipart form with .xlsx file). Parses Excel with first name, last name, email columns; creates students or matches by email; adds to roster. Returns summary (created, added, skipped, errors). Uses excelize library. |
 
 ### Not present (from your list)
 - **Text extraction** (PDF/DOCX → raw text)
@@ -32,7 +33,6 @@
 - **Final evaluation + results endpoint** and stored scoring JSON API
 - **Golden-path integration test** covering full flow (through /next and results)
 - **Rate limits** or **prompt injection hardening**
-- **Bulk student roster upload (.xlsx)** — teacher uploads spreadsheet (first name, last name, email) to add students to a class roster
 - **Bulk interview creation** for a class
 - **Results listing/export** for teacher
 - **Voice (push-to-talk) + STT**
@@ -88,11 +88,18 @@ Do these in sequence so each step has the right foundation.
 
 After that, proceed in order: **#4** (bulk student roster upload), then **#5** (text extraction), and so on.
 
-**Step #4 – Bulk student roster upload (.xlsx)** (when you reach it):
-- Endpoint: e.g. `POST /classes/{id}/roster/upload` (multipart form with .xlsx file).
-- Expected .xlsx columns: first name, last name, email (exact names or configurable).
-- For each row: create student (email + display name from first/last) or get existing by email; add to roster for the class. Handle duplicates (e.g. skip or update).
-- Library: e.g. [excelize](https://github.com/xuri/excelize) for Go. Return summary (created count, added to roster count, errors/skipped).
+**Step #4 – Bulk student roster upload (.xlsx)** — ✅ **Done**
+
+1. **Handler** (`backend/internal/api/handlers/roster.go`): `UploadRoster` method — parses multipart form, validates .xlsx file, reads Excel using excelize library.
+2. **Column detection**: Automatically detects columns (supports variations: "first name"/"firstname"/"first_name"/"fname", "last name"/"lastname"/"last_name"/"lname", "email"/"e-mail"/"email address").
+3. **Student processing**: For each row, gets existing student by email or creates new one; adds to class roster (skips if already in roster).
+4. **Error handling**: Validates file format, handles missing columns, invalid emails, duplicates gracefully.
+5. **Response**: Returns summary JSON with `createdCount`, `addedToRosterCount`, `skippedCount`, `errorCount`, and `errors` array.
+6. **Route**: `POST /classes/{id}/roster/upload` added to router.
+7. **Dependency**: Added `github.com/xuri/excelize/v2` to go.mod.
+8. **Test script**: `backend/api_test/test-roster-upload.sh` for testing.
+
+**Usage:** POST multipart form to `/classes/{class-id}/roster/upload` with `file` field containing .xlsx file with header row (first name, last name, email) and data rows.
 
 ---
 
@@ -114,6 +121,7 @@ Once students and roster exist, consider:
 | Router | `backend/internal/api/router.go` |
 | Server deps | `backend/internal/api/server.go` |
 | Student auth | `backend/internal/auth/`, `backend/internal/api/middleware/auth.go`, `backend/internal/api/handlers/auth.go` |
+| Roster upload | `backend/internal/api/handlers/roster.go` (UploadRoster method), `backend/api_test/test-roster-upload.sh` |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

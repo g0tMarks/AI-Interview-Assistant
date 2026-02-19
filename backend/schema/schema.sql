@@ -239,6 +239,7 @@ CREATE TABLE app.interviews (
     interview_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     interview_plan_id UUID NOT NULL REFERENCES app.interview_plans(interview_plan_id) ON DELETE CASCADE,
     teacher_id        UUID REFERENCES app.teachers(teacher_id) ON DELETE SET NULL,
+    student_id        UUID REFERENCES app.students(student_id) ON DELETE SET NULL,
     simulated         BOOLEAN NOT NULL DEFAULT TRUE,
     student_name      TEXT,
     status            app.interview_status NOT NULL DEFAULT 'in_progress',

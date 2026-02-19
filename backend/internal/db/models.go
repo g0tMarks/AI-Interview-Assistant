@@ -189,6 +189,7 @@ type AppInterview struct {
 	InterviewID     pgtype.UUID        `db:"interview_id" json:"interviewId"`
 	InterviewPlanID pgtype.UUID        `db:"interview_plan_id" json:"interviewPlanId"`
 	TeacherID       pgtype.UUID        `db:"teacher_id" json:"teacherId"`
+	StudentID       pgtype.UUID        `db:"student_id" json:"studentId"`
 	Simulated       bool               `db:"simulated" json:"simulated"`
 	StudentName     pgtype.Text        `db:"student_name" json:"studentName"`
 	Status          string             `db:"status" json:"status"`

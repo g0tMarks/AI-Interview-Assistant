@@ -23,17 +23,20 @@ func NewInterviewHandler(q *db.Queries) *InterviewHandler {
 }
 
 type CreateInterviewRequest struct {
-	InterviewPlanID uuid.UUID `json:"interviewPlanId"`
-	TeacherID       uuid.UUID `json:"teacherId"`
-	Simulated       *bool     `json:"simulated"`
-	StudentName     string    `json:"studentName"`
-	Status          string    `json:"status"`
+	InterviewPlanID uuid.UUID  `json:"interviewPlanId"`
+	TeacherID       uuid.UUID  `json:"teacherId"`
+	ClassID         *uuid.UUID `json:"classId,omitempty"`
+	StudentID       *uuid.UUID `json:"studentId,omitempty"`
+	Simulated       *bool      `json:"simulated"`
+	StudentName     string     `json:"studentName"`
+	Status          string     `json:"status"`
 }
 
 type InterviewResponse struct {
 	InterviewID     uuid.UUID          `json:"interviewId"`
 	InterviewPlanID uuid.UUID          `json:"interviewPlanId"`
 	TeacherID       *uuid.UUID         `json:"teacherId"`
+	StudentID       *uuid.UUID         `json:"studentId"`
 	Simulated       bool               `json:"simulated"`
 	StudentName     *string            `json:"studentName"`
 	Status          string             `json:"status"`
@@ -104,9 +107,45 @@ func (h *InterviewHandler) CreateInterview(w http.ResponseWriter, r *http.Reques
 		studentNamePgtype.Valid = true
 	}
 
+	// Determine student_id: if classId is provided, verify student is in roster
+	studentIDPgtype := pgtype.UUID{}
+	if req.ClassID != nil && req.StudentID != nil {
+		// Verify student is in the class roster
+		classIDPgtype := pgtype.UUID{
+			Bytes: *req.ClassID,
+			Valid: true,
+		}
+		studentIDPgtypeCheck := pgtype.UUID{
+			Bytes: *req.StudentID,
+			Valid: true,
+		}
+		inClass, err := h.q.IsStudentInClass(ctx, db.IsStudentInClassParams{
+			ClassID:   classIDPgtype,
+			StudentID: studentIDPgtypeCheck,
+		})
+		if err != nil {
+			http.Error(w, "failed to verify student in class: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !inClass {
+			http.Error(w, "student is not in the specified class", http.StatusBadRequest)
+			return
+		}
+		// Student is in class, use the provided student_id
+		studentIDPgtype = studentIDPgtypeCheck
+	} else if req.StudentID != nil {
+		// Direct student_id provided without classId
+		studentIDPgtype = pgtype.UUID{
+			Bytes: *req.StudentID,
+			Valid: true,
+		}
+	}
+	// If neither classId+studentId nor studentId is provided, studentIDPgtype remains invalid (null)
+
 	interview, err := h.q.CreateInterview(ctx, db.CreateInterviewParams{
 		InterviewPlanID: interviewPlanIDPgtype,
 		TeacherID:       teacherIDPgtype,
+		StudentID:       studentIDPgtype,
 		Simulated:       simulated,
 		StudentName:     studentNamePgtype,
 		Status:           status,
@@ -133,6 +172,12 @@ func (h *InterviewHandler) CreateInterview(w http.ResponseWriter, r *http.Reques
 		teacherIDResp = &uid
 	}
 
+	var studentIDResp *uuid.UUID
+	if interview.StudentID.Valid {
+		uid := uuid.UUID(interview.StudentID.Bytes)
+		studentIDResp = &uid
+	}
+
 	var studentNameResp *string
 	if interview.StudentName.Valid {
 		studentNameResp = &interview.StudentName.String
@@ -147,6 +192,7 @@ func (h *InterviewHandler) CreateInterview(w http.ResponseWriter, r *http.Reques
 		InterviewID:     interviewID,
 		InterviewPlanID: interviewPlanIDResp,
 		TeacherID:       teacherIDResp,
+		StudentID:       studentIDResp,
 		Simulated:       interview.Simulated,
 		StudentName:     studentNameResp,
 		Status:          interview.Status,
@@ -210,6 +256,12 @@ func (h *InterviewHandler) GetInterview(w http.ResponseWriter, r *http.Request) 
 		teacherIDResp = &uid
 	}
 
+	var studentIDResp *uuid.UUID
+	if interview.StudentID.Valid {
+		uid := uuid.UUID(interview.StudentID.Bytes)
+		studentIDResp = &uid
+	}
+
 	var studentNameResp *string
 	if interview.StudentName.Valid {
 		studentNameResp = &interview.StudentName.String
@@ -224,6 +276,7 @@ func (h *InterviewHandler) GetInterview(w http.ResponseWriter, r *http.Request) 
 		InterviewID:     interviewIDResp,
 		InterviewPlanID: interviewPlanIDResp,
 		TeacherID:       teacherIDResp,
+		StudentID:       studentIDResp,
 		Simulated:       interview.Simulated,
 		StudentName:     studentNameResp,
 		Status:          interview.Status,

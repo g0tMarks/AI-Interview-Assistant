@@ -2,6 +2,7 @@
 INSERT INTO app.interviews (
     interview_plan_id,
     teacher_id,
+    student_id,
     simulated,
     student_name,
     status
@@ -9,6 +10,7 @@ INSERT INTO app.interviews (
 VALUES (
     @interview_plan_id::uuid,
     @teacher_id::uuid,
+    @student_id::uuid,
     @simulated,
     @student_name,
     @status::app.interview_status

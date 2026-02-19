@@ -15,6 +15,7 @@ const createInterview = `-- name: CreateInterview :one
 INSERT INTO app.interviews (
     interview_plan_id,
     teacher_id,
+    student_id,
     simulated,
     student_name,
     status
@@ -22,16 +23,18 @@ INSERT INTO app.interviews (
 VALUES (
     $1::uuid,
     $2::uuid,
-    $3,
+    $3::uuid,
     $4,
-    $5::app.interview_status
+    $5,
+    $6::app.interview_status
 )
-RETURNING interview_id, interview_plan_id, teacher_id, simulated, student_name, status, started_at, completed_at
+RETURNING interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at
 `
 
 type CreateInterviewParams struct {
 	InterviewPlanID pgtype.UUID `db:"interview_plan_id" json:"interviewPlanId"`
 	TeacherID       pgtype.UUID `db:"teacher_id" json:"teacherId"`
+	StudentID       pgtype.UUID `db:"student_id" json:"studentId"`
 	Simulated       bool        `db:"simulated" json:"simulated"`
 	StudentName     pgtype.Text `db:"student_name" json:"studentName"`
 	Status          string      `db:"status" json:"status"`
@@ -41,6 +44,7 @@ func (q *Queries) CreateInterview(ctx context.Context, arg CreateInterviewParams
 	row := q.db.QueryRow(ctx, createInterview,
 		arg.InterviewPlanID,
 		arg.TeacherID,
+		arg.StudentID,
 		arg.Simulated,
 		arg.StudentName,
 		arg.Status,
@@ -50,6 +54,7 @@ func (q *Queries) CreateInterview(ctx context.Context, arg CreateInterviewParams
 		&i.InterviewID,
 		&i.InterviewPlanID,
 		&i.TeacherID,
+		&i.StudentID,
 		&i.Simulated,
 		&i.StudentName,
 		&i.Status,
@@ -60,7 +65,7 @@ func (q *Queries) CreateInterview(ctx context.Context, arg CreateInterviewParams
 }
 
 const getInterviewByID = `-- name: GetInterviewByID :one
-SELECT interview_id, interview_plan_id, teacher_id, simulated, student_name, status, started_at, completed_at
+SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at
 FROM app.interviews
 WHERE interview_id = $1::uuid
 `
@@ -72,6 +77,7 @@ func (q *Queries) GetInterviewByID(ctx context.Context, interviewID pgtype.UUID)
 		&i.InterviewID,
 		&i.InterviewPlanID,
 		&i.TeacherID,
+		&i.StudentID,
 		&i.Simulated,
 		&i.StudentName,
 		&i.Status,
@@ -82,7 +88,7 @@ func (q *Queries) GetInterviewByID(ctx context.Context, interviewID pgtype.UUID)
 }
 
 const listInterviewsByPlan = `-- name: ListInterviewsByPlan :many
-SELECT interview_id, interview_plan_id, teacher_id, simulated, student_name, status, started_at, completed_at
+SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at
 FROM app.interviews
 WHERE interview_plan_id = $1::uuid
 ORDER BY started_at DESC
@@ -101,6 +107,7 @@ func (q *Queries) ListInterviewsByPlan(ctx context.Context, interviewPlanID pgty
 			&i.InterviewID,
 			&i.InterviewPlanID,
 			&i.TeacherID,
+			&i.StudentID,
 			&i.Simulated,
 			&i.StudentName,
 			&i.Status,
