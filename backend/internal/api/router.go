@@ -64,6 +64,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Get("/classes/{classId}/roster", rosterHandler.ListRoster)
 	r.Post("/classes/{classId}/roster", rosterHandler.AddToRoster)
 	r.Delete("/classes/{classId}/roster/{studentId}", rosterHandler.RemoveFromRoster)
+	r.Post("/classes/{id}/roster/upload", rosterHandler.UploadRoster)
 
 	return r
 }

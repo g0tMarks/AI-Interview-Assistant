@@ -41,3 +41,10 @@
 [INFO] 2025-12-11 23:05:57 Starting API...
 [DBUG] 2025-12-11 23:05:57 Debugging active
 [INFO] 2025-12-11 23:05:57 Database queries initialised successfully: true
+[INFO] 2026-02-19 21:27:10 Logger initialised in  mode
+[INFO] 2026-02-19 21:27:10 Starting API...
+[DBUG] 2026-02-19 21:27:10 Debugging active
+[INFO] 2026-02-19 21:27:10 Database queries initialised successfully: true
+[INFO] 2026-02-19 21:27:10 LLM service initialized
+[WARN] 2026-02-19 21:27:10 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-19 21:27:10 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
