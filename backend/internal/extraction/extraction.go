@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"strings"
 
-	"github.com/unidoc/unioffice/document"
-	"github.com/unidoc/unipdf/v3/extractor"
-	"github.com/unidoc/unipdf/v3/model"
+	"github.com/ledongthuc/pdf"
+	"github.com/xavier268/mydocx"
 )
 
 var (
@@ -16,49 +16,46 @@ var (
 	ErrEmptyDocument     = errors.New("document contains no text")
 )
 
-// ExtractTextFromPDF extracts text from a PDF file reader.
+// ExtractTextFromPDF extracts text from a PDF using ledongthuc/pdf (BSD-3-Clause, no license required).
+// Uses a temp file because the library only supports opening by path.
 func ExtractTextFromPDF(r io.ReadSeeker) (string, error) {
-	pdfReader, err := model.NewPdfReader(r)
+	fileBytes, err := io.ReadAll(r)
 	if err != nil {
 		return "", err
 	}
 
-	numPages, err := pdfReader.GetNumPages()
+	tmp, err := os.CreateTemp("", "rubric-pdf-*.pdf")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(fileBytes); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+
+	f, pdfReader, err := pdf.Open(tmpPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+
+	plainTextReader, err := pdfReader.GetPlainText()
 	if err != nil {
 		return "", err
 	}
 
-	if numPages == 0 {
-		return "", ErrEmptyDocument
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(plainTextReader); err != nil {
+		return "", err
 	}
 
-	var textBuilder strings.Builder
-
-	for i := 1; i <= numPages; i++ {
-		page, err := pdfReader.GetPage(i)
-		if err != nil {
-			continue // Skip pages that can't be read
-		}
-
-		ex, err := extractor.New(page)
-		if err != nil {
-			continue // Skip pages that can't be extracted
-		}
-
-		pageText, err := ex.ExtractText()
-		if err != nil {
-			continue // Skip pages with extraction errors
-		}
-
-		if pageText != "" {
-			textBuilder.WriteString(pageText)
-			if i < numPages {
-				textBuilder.WriteString("\n\n")
-			}
-		}
-	}
-
-	text := strings.TrimSpace(textBuilder.String())
+	text := strings.TrimSpace(buf.String())
 	if text == "" {
 		return "", ErrEmptyDocument
 	}
@@ -66,30 +63,33 @@ func ExtractTextFromPDF(r io.ReadSeeker) (string, error) {
 	return text, nil
 }
 
-// ExtractTextFromDOCX extracts text from a DOCX file reader.
+// ExtractTextFromDOCX extracts text from a DOCX file reader using mydocx (MIT license).
 func ExtractTextFromDOCX(r io.Reader) (string, error) {
-	// Read all bytes first since document.Read needs io.ReaderAt
 	fileBytes, err := io.ReadAll(r)
 	if err != nil {
 		return "", err
 	}
 
-	// Create a ReaderAt from bytes
-	readerAt := bytes.NewReader(fileBytes)
-	doc, err := document.Read(readerAt, int64(len(fileBytes)))
+	content, err := mydocx.ExtractTextBytes(fileBytes)
 	if err != nil {
 		return "", err
 	}
 
-	// Extract text using the ExtractText method
-	docText := doc.ExtractText()
-	if docText == nil {
+	if len(content) == 0 {
 		return "", ErrEmptyDocument
 	}
 
-	// Get plain text from the DocText object
-	text := docText.Text()
-	text = strings.TrimSpace(text)
+	// Flatten map[container][]paragraphs into a single string (document.xml first, then others)
+	var parts []string
+	for _, paragraphs := range content {
+		for _, p := range paragraphs {
+			if t := strings.TrimSpace(p); t != "" {
+				parts = append(parts, t)
+			}
+		}
+	}
+
+	text := strings.TrimSpace(strings.Join(parts, "\n\n"))
 	if text == "" {
 		return "", ErrEmptyDocument
 	}

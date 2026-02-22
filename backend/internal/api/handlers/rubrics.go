@@ -253,7 +253,12 @@ func (h *RubricHandler) UploadRubricFile(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if errors.Is(err, extraction.ErrEmptyDocument) {
-			http.Error(w, "file contains no extractable text", http.StatusBadRequest)
+			msg := "file contains no extractable text"
+			if strings.HasSuffix(strings.ToLower(header.Filename), ".pdf") {
+				msg += " (PDF may be image-only/scanned; use a PDF with a text layer or run OCR first)"
+			}
+			msg += "."
+			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
 		http.Error(w, "failed to extract text from file: "+err.Error(), http.StatusInternalServerError)
