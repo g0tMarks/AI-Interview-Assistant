@@ -24,10 +24,10 @@
 | **Uploads (local storage)** | POST /uploads (multipart file); GET /uploads/{key} (download). Local disk store under `UPLOADS_DIR`. |
 | **Bulk student roster upload (.xlsx)** | POST /classes/{id}/roster/upload (multipart form with .xlsx file). Parses Excel with first name, last name, email columns; creates students or matches by email; adds to roster. Returns summary (created, added, skipped, errors). Uses excelize library. |
 | **Text extraction** (PDF/DOCX → raw text) | POST /rubrics/upload (multipart form with PDF/DOCX file). Extracts text using **ledongthuc/pdf** (PDF, BSD-3-Clause) and **mydocx** (DOCX, MIT); no commercial license required. Stores in `rubrics.raw_text` and returns in API response. |
+| **Rubric parser** (LLM one-shot + validation + store) | POST /rubrics/{id}/parse: LLM parses `raw_text` → criteria JSON + question plan; validated; stored in `rubric_criteria`, `interview_plans`, `interview_questions`. Re-parsing replaces existing. |
 
 ### Not present (from your list)
-- **Rubric parser** (raw → structured JSON) or **schema validation**
-- **Rubric version editing** (teacher corrects parser) — no UpdateRubric / PATCH rubric
+- **Rubric version editing** (teacher corrects criteria/plan) — no UpdateRubric / PATCH rubric
 - **Interview messages HTTP API** (POST/GET messages for an interview)
 - **Interview engine v1** and **GET/POST /interviews/{id}/next**
 - **Final evaluation + results endpoint** and stored scoring JSON API
@@ -51,10 +51,10 @@ Do these in sequence so each step has the right foundation.
 | **3** | **Uploads + file storage abstraction** | Multipart upload endpoint(s); abstraction (e.g. interface) for store (local/S3). Used by rubric file upload and later by other assets. |
 | **4** | **Bulk student roster upload (.xlsx)** | Teacher uploads .xlsx with columns: first name, last name, email. Parse file (e.g. excelize), create students or match by email, add all to specified class roster. Endpoint e.g. POST /classes/{id}/roster/upload. Depends on uploads (multipart) and classes/roster. |
 | **5** | **Text extraction for PDF/DOCX → raw text** | ✅ **Done** — Use uploads + storage; extract text; store in `rubrics.raw_text` and return in API. PDF: ledongthuc/pdf; DOCX: mydocx (no commercial license). |
-| **6** | **Rubric parser (raw → structured JSON) + schema validation** | Parse raw text → criteria (name, description, weight, levels). Define JSON schema; validate output. Can be LLM-based or rule-based; store result as rubric_criteria. |
-| **7** | **Rubric version editing endpoint** | PATCH /rubrics/{id} and/or PATCH /rubrics/{id}/criteria (or replace criteria). Teacher can fix parser mistakes. Requires UpdateRubric / update criteria in SQLC if not present. |
+| **6** | **Rubric parser (LLM one-shot) + validation + store** | Use an LLM to parse raw text in one shot → (1) criteria JSON + (2) initial question plan. Validate JSON shape. Store criteria + plan. Teacher can edit criteria/plan (Step #7). |
+| **7** | **Rubric version editing endpoint** | PATCH /rubrics/{id} and/or PATCH /rubrics/{id}/criteria and plan. Teacher can fix parser mistakes and edit criteria/plan. Requires UpdateRubric / update criteria and plan in SQLC if not present. |
 | **8** | **Interview_messages table + endpoints** | Table and SQLC exist. Add: POST /interviews/{id}/messages, GET /interviews/{id}/messages. Used by engine and frontend. |
-| **9** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); optional LLM for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
+| **9** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); use LLM API for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
 | **10** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
 | **11** | **Golden-path integration test** | Single test: create teacher → (optional class/student) → rubric → template → interview → call /next until done → trigger evaluation → GET results; assert status, summary, and scoring shape. |
 | **12** | **Rate limits + prompt injection hardening** | Global or per-route rate limits; sanitize/validate user content before sending to LLM and in storage. |
@@ -152,6 +152,23 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 
 **Usage**: POST multipart form to `/rubrics/upload` with `file` (PDF or DOCX), `teacherId`, and optional `title` and `description`. The API extracts text, creates a rubric, and returns it with the extracted text in `rawText`.
 
+**Step #6 – Rubric parser (LLM one-shot) + validation + store** — ✅ **Done**
+
+**Completed**: 2026-02-22
+
+1. **LLM one-shot parse** (`backend/internal/services/llm.go`): Added `ParseRubric(ctx, rubricTitle, rawText)` to `LLMService`. Single LLM call returns structured JSON with:
+   - **criteria**: array of `{ name, description, weight, orderIndex, levels? }` matching `rubric_criteria`.
+   - **questionPlan**: `{ title, instructions, questions: [{ prompt, orderIndex, criterionName? }] }` for `interview_plans` + `interview_questions`.
+2. **Parser types** (`backend/internal/rubricparser/types.go`): `ParseRubricOutput`, `ParsedCriterion`, `ParsedQuestionPlan`, `ParsedQuestion`.
+3. **Validation** (`backend/internal/rubricparser/validate.go`): `Validate(out)` checks non-empty criteria, unique names, weight ≥ 0, non-empty question prompts; unit tests in `validate_test.go`.
+4. **Store**: Handler runs in a DB transaction: deletes existing `interview_plans` for rubric (cascade to questions) and `rubric_criteria`, then creates criteria, one interview plan, and questions (linking to criteria by `criterionName` when present).
+5. **Endpoint**: `POST /rubrics/{id}/parse` — requires rubric with non-empty `raw_text`; returns `{ rubricId, criteriaCount, interviewPlanId, questionCount }`. Re-parsing replaces existing criteria and plans for that rubric.
+6. **Dependencies**: `TxBeginner` added to `api.Dependencies` (conn passed from main) for transactions; `RubricHandler` now takes `Queries`, `LLMService`, `TxBeginner`.
+7. **SQLC**: Added `DeletePlansByRubric` in `interview_plans.sql`.
+8. **Test script**: `backend/api_test/test-rubric-parse.sh <rubric-id>` (requires OPENAI_API_KEY or ANTHROPIC_API_KEY).
+
+**Teacher edit** (criteria/plan) is Step #7 (PATCH /rubrics/{id} etc.).
+
 ---
 
 ## 5. File Reference
@@ -166,6 +183,7 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 | Student auth | `backend/internal/auth/`, `backend/internal/api/middleware/auth.go`, `backend/internal/api/handlers/auth.go` |
 | Roster upload | `backend/internal/api/handlers/roster.go` (UploadRoster method), `backend/api_test/test-roster-upload.sh` |
 | Text extraction | `backend/internal/extraction/extraction.go`, `backend/internal/api/handlers/rubrics.go` (UploadRubricFile), `backend/api_test/test-rubric-upload.sh` |
+| Rubric parser | `backend/internal/rubricparser/`, `handlers/rubrics.go` (ParseRubric), `services/llm.go` (ParseRubric), `api_test/test-rubric-parse.sh` |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

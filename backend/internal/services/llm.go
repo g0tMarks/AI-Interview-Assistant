@@ -8,12 +8,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
+
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/rubricparser"
 )
 
-// LLMService provides an interface for generating interview instructions from rubrics
+// LLMService provides an interface for generating interview instructions and parsing rubrics.
 type LLMService interface {
 	GenerateInterviewInstructions(ctx context.Context, rubricTitle string, rubricRawText string) (string, error)
+	ParseRubric(ctx context.Context, rubricTitle string, rawText string) (*rubricparser.ParseRubricOutput, error)
 }
 
 // OpenAIService implements LLMService using OpenAI API (or Anthropic as fallback)
@@ -203,4 +208,76 @@ func (s *OpenAIService) callAnthropicAPI(ctx context.Context, prompt string) (st
 	}
 
 	return response.Content[0].Text, nil
+}
+
+// ParseRubric runs a one-shot LLM parse of rubric raw text into criteria JSON and question plan.
+func (s *OpenAIService) ParseRubric(ctx context.Context, rubricTitle string, rawText string) (*rubricparser.ParseRubricOutput, error) {
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("LLM API key not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+	}
+	if strings.TrimSpace(rawText) == "" {
+		return nil, fmt.Errorf("rubric raw text is empty")
+	}
+
+	prompt := fmt.Sprintf(`You are an expert at extracting structured assessment data from rubrics. Parse the following rubric into two parts: (1) criteria, and (2) an initial question plan for conducting an interview.
+
+Rubric Title: %s
+
+Rubric content:
+%s
+
+Respond with a single JSON object only, no other text or markdown. Use exactly this shape:
+{
+  "criteria": [
+    {
+      "name": "short criterion name",
+      "description": "what is being assessed",
+      "weight": 1.0,
+      "orderIndex": 0,
+      "levels": { "A": "description for level A", "B": "description for level B" }
+    }
+  ],
+  "questionPlan": {
+    "title": "Interview plan title (e.g. same as rubric or brief description)",
+    "instructions": "Brief instructions for the AI interviewer on how to use this plan.",
+    "questions": [
+      { "prompt": "First question to ask the student.", "orderIndex": 0, "criterionName": "optional: name of criterion this probes" },
+      { "prompt": "Second question.", "orderIndex": 1, "criterionName": "" }
+    ]
+  }
+}
+
+Rules:
+- criteria: at least one; name and description required; weight >= 0 (default 1.0); orderIndex 0-based; levels is optional object (level label -> description).
+- questionPlan.questions: at least one; prompt required; orderIndex 0-based; criterionName optional.
+- Output only valid JSON.`, rubricTitle, rawText)
+
+	var raw string
+	var err error
+	if s.useAnthropic {
+		raw, err = s.callAnthropicAPI(ctx, prompt)
+	} else {
+		raw, err = s.callOpenAIAPI(ctx, prompt)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	jsonBytes := extractJSON(raw)
+	var out rubricparser.ParseRubricOutput
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		return nil, fmt.Errorf("LLM returned invalid JSON: %w", err)
+	}
+	return &out, nil
+}
+
+// extractJSON finds JSON in the response, stripping optional markdown code fences.
+var jsonBlockRE = regexp.MustCompile("(?s)\\s*```(?:json)?\\s*([\\s\\S]*?)```\\s*")
+
+func extractJSON(s string) []byte {
+	s = strings.TrimSpace(s)
+	if m := jsonBlockRE.FindStringSubmatch(s); len(m) >= 2 {
+		return []byte(strings.TrimSpace(m[1]))
+	}
+	return []byte(s)
 }

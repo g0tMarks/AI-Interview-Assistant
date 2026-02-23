@@ -61,6 +61,16 @@ func (q *Queries) CreateInterviewPlan(ctx context.Context, arg CreateInterviewPl
 	return i, err
 }
 
+const deletePlansByRubric = `-- name: DeletePlansByRubric :exec
+DELETE FROM app.interview_plans
+WHERE rubric_id = $1::uuid
+`
+
+func (q *Queries) DeletePlansByRubric(ctx context.Context, rubricID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deletePlansByRubric, rubricID)
+	return err
+}
+
 const getInterviewPlanByID = `-- name: GetInterviewPlanByID :one
 SELECT interview_plan_id, rubric_id, title, instructions, config, status, curriculum_subject, curriculum_level_band, created_at, updated_at
 FROM app.interview_plans

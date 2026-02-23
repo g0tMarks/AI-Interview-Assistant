@@ -98,6 +98,7 @@ func main() {
 	deps := api.Dependencies{
 		Queries:         queries,
 		LLMService:      llmService,
+		TxBeginner:      conn,
 		JWTSecret:       jwtSecret,
 		Storage:         store,
 		UploadsMaxBytes: uploadsMaxBytes,

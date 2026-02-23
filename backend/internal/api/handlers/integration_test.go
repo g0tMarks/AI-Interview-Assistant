@@ -145,7 +145,7 @@ func TestCreateRubricTemplateInterviewFlow(t *testing.T) {
 
 	// Initialize handlers
 	llmService := services.NewOpenAIService()
-	rubricHandler := NewRubricHandler(queries)
+	rubricHandler := NewRubricHandler(queries, nil, nil)
 	templateHandler := NewInterviewTemplateHandler(queries, llmService)
 	interviewHandler := NewInterviewHandler(queries)
 

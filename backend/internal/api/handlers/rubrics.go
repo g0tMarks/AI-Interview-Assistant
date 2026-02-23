@@ -2,25 +2,36 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/extraction"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/rubricparser"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
 )
 
 type RubricHandler struct {
-	q *db.Queries
+	q           *db.Queries
+	llmService  services.LLMService
+	txBeginner  apiTxBeginner
 }
 
-func NewRubricHandler(q *db.Queries) *RubricHandler {
-	return &RubricHandler{q: q}
+type apiTxBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+func NewRubricHandler(q *db.Queries, llmService services.LLMService, txBeginner apiTxBeginner) *RubricHandler {
+	return &RubricHandler{q: q, llmService: llmService, txBeginner: txBeginner}
 }
 
 type CreateRubricRequest struct {
@@ -316,5 +327,189 @@ func (h *RubricHandler) UploadRubricFile(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ParseRubricResponse is the response for POST /rubrics/{id}/parse.
+type ParseRubricResponse struct {
+	RubricID        uuid.UUID `json:"rubricId"`
+	CriteriaCount   int       `json:"criteriaCount"`
+	InterviewPlanID uuid.UUID `json:"interviewPlanId"`
+	QuestionCount   int       `json:"questionCount"`
+}
+
+// ParseRubric runs LLM one-shot parse, validates, and stores criteria + interview plan.
+// Expects rubric ID in path (chi URL param "id").
+func (h *RubricHandler) ParseRubric(w http.ResponseWriter, r *http.Request) {
+	rubricIDStr := chi.URLParam(r, "id")
+	if rubricIDStr == "" {
+		http.Error(w, "rubric id is required", http.StatusBadRequest)
+		return
+	}
+	rubricID, err := uuid.Parse(rubricIDStr)
+	if err != nil {
+		http.Error(w, "invalid rubric id", http.StatusBadRequest)
+		return
+	}
+
+	if h.llmService == nil {
+		http.Error(w, "LLM service not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if h.txBeginner == nil {
+		http.Error(w, "database transactions not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	rubricIDPg := pgtype.UUID{Bytes: rubricID, Valid: true}
+
+	rubric, err := h.q.GetRubricByID(ctx, rubricIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "rubric not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get rubric", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(rubric.RawText) == "" {
+		http.Error(w, "rubric has no raw text to parse (upload a file or set rawText first)", http.StatusBadRequest)
+		return
+	}
+
+	parsed, err := h.llmService.ParseRubric(ctx, rubric.Title, rubric.RawText)
+	if err != nil {
+		http.Error(w, "parse failed: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if err := rubricparser.Validate(parsed); err != nil {
+		http.Error(w, "validation failed: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	tx, err := h.txBeginner.Begin(ctx)
+	if err != nil {
+		http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := h.q.WithTx(tx)
+
+	// Replace existing: delete plans (cascades to questions), then criteria
+	if err := q.DeletePlansByRubric(ctx, rubricIDPg); err != nil {
+		http.Error(w, "failed to clear existing plans", http.StatusInternalServerError)
+		return
+	}
+	if err := q.DeleteCriteriaByRubric(ctx, rubricIDPg); err != nil {
+		http.Error(w, "failed to clear existing criteria", http.StatusInternalServerError)
+		return
+	}
+
+	// Create criteria and collect IDs by name for linking questions
+	criterionIDByName := make(map[string]pgtype.UUID)
+	descPg := func(s string) pgtype.Text {
+		t := pgtype.Text{}
+		if s != "" {
+			t.String = s
+			t.Valid = true
+		}
+		return t
+	}
+	for i, c := range parsed.Criteria {
+		weight := pgtype.Numeric{}
+		_ = weight.Scan(c.Weight)
+		levelsJSON := []byte("null")
+		if len(c.Levels) > 0 {
+			levelsJSON, _ = json.Marshal(c.Levels)
+		}
+		orderIdx := int32(i)
+		if c.OrderIndex >= 0 {
+			orderIdx = int32(c.OrderIndex)
+		}
+		created, err := q.CreateRubricCriterion(ctx, db.CreateRubricCriterionParams{
+			RubricID:    rubricIDPg,
+			Name:        strings.TrimSpace(c.Name),
+			Description: descPg(c.Description),
+			Weight:      weight,
+			OrderIndex:  orderIdx,
+			Levels:      levelsJSON,
+		})
+		if err != nil {
+			http.Error(w, "failed to create criterion: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		criterionIDByName[strings.TrimSpace(c.Name)] = created.RubricCriterionID
+	}
+
+	// Create interview plan
+	planTitle := strings.TrimSpace(parsed.QuestionPlan.Title)
+	if planTitle == "" {
+		planTitle = rubric.Title + " – Interview plan"
+	}
+	instructionsPg := pgtype.Text{}
+	if parsed.QuestionPlan.Instructions != "" {
+		instructionsPg.String = parsed.QuestionPlan.Instructions
+		instructionsPg.Valid = true
+	}
+	plan, err := q.CreateInterviewPlan(ctx, db.CreateInterviewPlanParams{
+		RubricID:            rubricIDPg,
+		Title:               planTitle,
+		Instructions:        instructionsPg,
+		Config:              []byte("{}"),
+		Status:              string(db.AppInterviewStatusDraft),
+		CurriculumSubject:   pgtype.Text{},
+		CurriculumLevelBand: pgtype.Text{},
+	})
+	if err != nil {
+		http.Error(w, "failed to create interview plan: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create questions (optionally link to criterion by name)
+	for i, qu := range parsed.QuestionPlan.Questions {
+		orderIdx := int32(i)
+		if qu.OrderIndex >= 0 {
+			orderIdx = int32(qu.OrderIndex)
+		}
+		criterionID := pgtype.UUID{Valid: false}
+		if name := strings.TrimSpace(qu.CriterionName); name != "" {
+			if id, ok := criterionIDByName[name]; ok {
+				criterionID = id
+			}
+		}
+		_, err := q.CreateInterviewQuestion(ctx, db.CreateInterviewQuestionParams{
+			InterviewPlanID:   pgtype.UUID{Bytes: plan.InterviewPlanID.Bytes, Valid: true},
+			RubricCriterionID: criterionID,
+			Prompt:            strings.TrimSpace(qu.Prompt),
+			QuestionType:      "open",
+			OrderIndex:        orderIdx,
+			IsActive:          true,
+			FollowUpToID:      pgtype.UUID{},
+			FollowUpCondition: pgtype.Text{},
+		})
+		if err != nil {
+			http.Error(w, "failed to create question: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "failed to commit transaction", http.StatusInternalServerError)
+		return
+	}
+
+	var planID uuid.UUID
+	if plan.InterviewPlanID.Valid {
+		planID = plan.InterviewPlanID.Bytes
+	}
+	resp := ParseRubricResponse{
+		RubricID:        rubricID,
+		CriteriaCount:   len(parsed.Criteria),
+		InterviewPlanID: planID,
+		QuestionCount:   len(parsed.QuestionPlan.Questions),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
 }

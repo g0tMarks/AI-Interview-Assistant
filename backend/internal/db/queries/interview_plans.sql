@@ -22,6 +22,10 @@ FROM app.interview_plans
 WHERE rubric_id = @rubric_id::uuid
 ORDER BY created_at DESC;
 
+-- name: DeletePlansByRubric :exec
+DELETE FROM app.interview_plans
+WHERE rubric_id = @rubric_id::uuid;
+
 -- name: UpdateInterviewPlanStatus :exec
 UPDATE app.interview_plans
 SET status = @status::app.interview_status,
