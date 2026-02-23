@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
+	"math/big"
 	"net/http"
 	"strings"
 
@@ -417,8 +419,15 @@ func (h *RubricHandler) ParseRubric(w http.ResponseWriter, r *http.Request) {
 		return t
 	}
 	for i, c := range parsed.Criteria {
-		weight := pgtype.Numeric{}
-		_ = weight.Scan(c.Weight)
+		weightVal := c.Weight
+		if weightVal <= 0 {
+			weightVal = 1.0
+		}
+		weight := pgtype.Numeric{
+			Int:   big.NewInt(int64(math.Round(weightVal * 100))),
+			Exp:   -2,
+			Valid: true,
+		}
 		levelsJSON := []byte("null")
 		if len(c.Levels) > 0 {
 			levelsJSON, _ = json.Marshal(c.Levels)

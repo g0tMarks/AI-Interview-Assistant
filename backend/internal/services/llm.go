@@ -157,8 +157,12 @@ func (s *OpenAIService) callOpenAIAPI(ctx context.Context, prompt string) (strin
 func (s *OpenAIService) callAnthropicAPI(ctx context.Context, prompt string) (string, error) {
 	url := "https://api.anthropic.com/v1/messages"
 
+	anthropicModel := os.Getenv("ANTHROPIC_MODEL")
+	if anthropicModel == "" {
+		anthropicModel = "claude-sonnet-4-6"
+	}
 	requestBody := map[string]interface{}{
-		"model": "claude-3-5-sonnet-20241022", // Can be made configurable via env var
+		"model": anthropicModel,
 		"max_tokens": 2000,
 		"messages": []map[string]string{
 			{

@@ -69,3 +69,66 @@
 [INFO] 2026-02-22 22:19:54 LLM service initialized
 [WARN] 2026-02-22 22:19:54 JWT_SECRET not set; using default (do not use in production)
 [WARN] 2026-02-22 22:19:54 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 21:43:40 Logger initialised in  mode
+[INFO] 2026-02-23 21:43:40 Starting API...
+[DBUG] 2026-02-23 21:43:40 Debugging active
+[INFO] 2026-02-23 21:44:18 Logger initialised in  mode
+[INFO] 2026-02-23 21:44:18 Starting API...
+[DBUG] 2026-02-23 21:44:18 Debugging active
+[INFO] 2026-02-23 21:44:18 Database queries initialised successfully: true
+[INFO] 2026-02-23 21:44:18 LLM service initialized
+[WARN] 2026-02-23 21:44:18 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 21:44:18 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:02:04 Logger initialised in  mode
+[INFO] 2026-02-23 22:02:04 Starting API...
+[DBUG] 2026-02-23 22:02:04 Debugging active
+[INFO] 2026-02-23 22:02:04 Database queries initialised successfully: true
+[INFO] 2026-02-23 22:02:04 LLM service initialized
+[WARN] 2026-02-23 22:02:04 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:02:04 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:07:00 Logger initialised in  mode
+[INFO] 2026-02-23 22:07:00 Starting API...
+[DBUG] 2026-02-23 22:07:00 Debugging active
+[INFO] 2026-02-23 22:07:00 Loaded .env from /home/richard/Documents/Software/Interview-Assistant/.env
+[INFO] 2026-02-23 22:07:00 Database queries initialised successfully: true
+[INFO] 2026-02-23 22:07:00 LLM service initialized (API key configured)
+[WARN] 2026-02-23 22:07:00 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:07:00 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:10:50 Logger initialised in  mode
+[INFO] 2026-02-23 22:10:50 Starting API...
+[DBUG] 2026-02-23 22:10:50 Debugging active
+[INFO] 2026-02-23 22:10:50 Database queries initialised successfully: true
+[INFO] 2026-02-23 22:10:50 LLM service initialized
+[WARN] 2026-02-23 22:10:50 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:10:50 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:12:54 Logger initialised in  mode
+[INFO] 2026-02-23 22:12:54 Starting API...
+[DBUG] 2026-02-23 22:12:54 Debugging active
+[INFO] 2026-02-23 22:12:54 Database queries initialised successfully: true
+[INFO] 2026-02-23 22:12:54 LLM service initialized
+[WARN] 2026-02-23 22:12:54 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:12:54 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:15:09 Logger initialised in  mode
+[INFO] 2026-02-23 22:15:09 Starting API...
+[DBUG] 2026-02-23 22:15:09 Debugging active
+[INFO] 2026-02-23 22:15:09 Database queries initialised successfully: true
+[WARN] 2026-02-23 22:15:09 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:15:09 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:17:10 Logger initialised in  mode
+[INFO] 2026-02-23 22:17:10 Starting API...
+[DBUG] 2026-02-23 22:17:10 Debugging active
+[INFO] 2026-02-23 22:17:10 Database queries initialised successfully: true
+[WARN] 2026-02-23 22:17:10 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:17:10 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:18:49 Logger initialised in  mode
+[INFO] 2026-02-23 22:18:49 Starting API...
+[DBUG] 2026-02-23 22:18:49 Debugging active
+[INFO] 2026-02-23 22:18:49 Database queries initialised successfully: true
+[WARN] 2026-02-23 22:18:49 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:18:49 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)
+[INFO] 2026-02-23 22:21:03 Logger initialised in  mode
+[INFO] 2026-02-23 22:21:03 Starting API...
+[DBUG] 2026-02-23 22:21:03 Debugging active
+[INFO] 2026-02-23 22:21:03 Database queries initialised successfully: true
+[WARN] 2026-02-23 22:21:03 JWT_SECRET not set; using default (do not use in production)
+[WARN] 2026-02-23 22:21:03 UPLOADS_DIR not set; using default ./uploads (set to an absolute path in production)

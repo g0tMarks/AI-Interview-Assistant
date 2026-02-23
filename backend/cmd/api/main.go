@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -27,12 +28,20 @@ func main() {
 	logger.Log.Info("Starting API...")
 	logger.Log.Debug("Debugging active")
 
-	// Load .env file manually
-	// Adjust path as needed because by default it looks in the current working directory for .env
-	err := godotenv.Load("../.env")
-	if err != nil {
-		fmt.Println("No .env file found, using environment variables")
-		fmt.Printf("%s\n", err)
+	// Load .env by walking up from cwd until we find it
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := cwd; ; dir = filepath.Dir(dir) {
+			envPath := filepath.Join(dir, ".env")
+			if _, statErr := os.Stat(envPath); statErr == nil {
+				if loadErr := godotenv.Load(envPath); loadErr == nil {
+					log.Printf("Loaded .env from %s", envPath)
+					break
+				}
+			}
+			if parent := filepath.Dir(dir); parent == dir {
+				break
+			}
+		}
 	}
 
 	dbURI := os.Getenv("DATABASE_URL")
@@ -72,7 +81,11 @@ func main() {
 
 	// Initialize LLM service
 	llmService := services.NewOpenAIService()
-	logger.Log.Info("LLM service initialized")
+	if os.Getenv("OPENAI_API_KEY") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		log.Printf("LLM API key configured")
+	} else {
+		log.Printf("WARNING: No LLM API key (OPENAI_API_KEY or ANTHROPIC_API_KEY) - rubric parse will fail")
+	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
