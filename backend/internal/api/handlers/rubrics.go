@@ -43,6 +43,13 @@ type CreateRubricRequest struct {
 	RawText     string    `json:"rawText"`
 }
 
+// PatchRubricRequest is the body for PATCH /rubrics/{id}. All fields optional; omitted = no change.
+type PatchRubricRequest struct {
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	RawText     *string `json:"rawText,omitempty"`
+}
+
 type RubricResponse struct {
 	RubricID    uuid.UUID          `json:"rubricId"`
 	TeacherID   uuid.UUID          `json:"teacherId"`
@@ -184,6 +191,77 @@ func (h *RubricHandler) ListRubrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// PatchRubric updates rubric metadata (title, description, rawText). Only provided fields are updated.
+func (h *RubricHandler) PatchRubric(w http.ResponseWriter, r *http.Request) {
+	rubricIDStr := chi.URLParam(r, "id")
+	if rubricIDStr == "" {
+		http.Error(w, "rubric id is required", http.StatusBadRequest)
+		return
+	}
+	rubricID, err := uuid.Parse(rubricIDStr)
+	if err != nil {
+		http.Error(w, "invalid rubric id", http.StatusBadRequest)
+		return
+	}
+
+	var req PatchRubricRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	rubricIDPg := pgtype.UUID{Bytes: rubricID, Valid: true}
+
+	_, err = h.q.GetRubricByID(ctx, rubricIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "rubric not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get rubric", http.StatusInternalServerError)
+		return
+	}
+
+	// Build update params: only set pgtype when request field is present
+	params := db.UpdateRubricParams{
+		RubricID: rubricIDPg,
+	}
+	if req.Title != nil {
+		params.Title = pgtype.Text{String: *req.Title, Valid: true}
+	}
+	if req.Description != nil {
+		params.Description = pgtype.Text{String: *req.Description, Valid: true}
+	}
+	if req.RawText != nil {
+		params.RawText = pgtype.Text{String: *req.RawText, Valid: true}
+	}
+
+	updated, err := h.q.UpdateRubric(ctx, params)
+	if err != nil {
+		http.Error(w, "failed to update rubric: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var teacherIDResp uuid.UUID
+	if updated.TeacherID.Valid {
+		teacherIDResp = updated.TeacherID.Bytes
+	}
+	resp := RubricResponse{
+		RubricID:    rubricID,
+		TeacherID:   teacherIDResp,
+		Title:       updated.Title,
+		Description: updated.Description.String,
+		RawText:     updated.RawText,
+		IsEnabled:   updated.IsEnabled,
+		CreatedAt:   updated.CreatedAt,
+		UpdatedAt:   updated.UpdatedAt,
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
@@ -332,12 +410,110 @@ func (h *RubricHandler) UploadRubricFile(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// ParseRubricResponse is the response for POST /rubrics/{id}/parse.
+// ParseRubricResponse is the response for POST /rubrics/{id}/parse and PUT /rubrics/{id}/criteria-and-plan.
 type ParseRubricResponse struct {
 	RubricID        uuid.UUID `json:"rubricId"`
 	CriteriaCount   int       `json:"criteriaCount"`
 	InterviewPlanID uuid.UUID `json:"interviewPlanId"`
 	QuestionCount   int       `json:"questionCount"`
+}
+
+// storeCriteriaAndPlan replaces criteria and interview plan for a rubric with the given parsed output.
+// Caller must run inside a transaction and pass the transaction-scoped q.
+func storeCriteriaAndPlan(ctx context.Context, q *db.Queries, rubricIDPg pgtype.UUID, rubricTitle string, parsed *rubricparser.ParseRubricOutput) (db.AppInterviewPlan, error) {
+	if err := q.DeletePlansByRubric(ctx, rubricIDPg); err != nil {
+		return db.AppInterviewPlan{}, err
+	}
+	if err := q.DeleteCriteriaByRubric(ctx, rubricIDPg); err != nil {
+		return db.AppInterviewPlan{}, err
+	}
+	descPg := func(s string) pgtype.Text {
+		t := pgtype.Text{}
+		if s != "" {
+			t.String = s
+			t.Valid = true
+		}
+		return t
+	}
+	criterionIDByName := make(map[string]pgtype.UUID)
+	for i, c := range parsed.Criteria {
+		weightVal := c.Weight
+		if weightVal <= 0 {
+			weightVal = 1.0
+		}
+		weight := pgtype.Numeric{
+			Int:   big.NewInt(int64(math.Round(weightVal * 100))),
+			Exp:   -2,
+			Valid: true,
+		}
+		levelsJSON := []byte("null")
+		if len(c.Levels) > 0 {
+			levelsJSON, _ = json.Marshal(c.Levels)
+		}
+		orderIdx := int32(i)
+		if c.OrderIndex >= 0 {
+			orderIdx = int32(c.OrderIndex)
+		}
+		created, err := q.CreateRubricCriterion(ctx, db.CreateRubricCriterionParams{
+			RubricID:    rubricIDPg,
+			Name:        strings.TrimSpace(c.Name),
+			Description: descPg(c.Description),
+			Weight:      weight,
+			OrderIndex:  orderIdx,
+			Levels:      levelsJSON,
+		})
+		if err != nil {
+			return db.AppInterviewPlan{}, err
+		}
+		criterionIDByName[strings.TrimSpace(c.Name)] = created.RubricCriterionID
+	}
+	planTitle := strings.TrimSpace(parsed.QuestionPlan.Title)
+	if planTitle == "" {
+		planTitle = rubricTitle + " – Interview plan"
+	}
+	instructionsPg := pgtype.Text{}
+	if parsed.QuestionPlan.Instructions != "" {
+		instructionsPg.String = parsed.QuestionPlan.Instructions
+		instructionsPg.Valid = true
+	}
+	plan, err := q.CreateInterviewPlan(ctx, db.CreateInterviewPlanParams{
+		RubricID:            rubricIDPg,
+		Title:               planTitle,
+		Instructions:        instructionsPg,
+		Config:              []byte("{}"),
+		Status:              string(db.AppInterviewStatusDraft),
+		CurriculumSubject:   pgtype.Text{},
+		CurriculumLevelBand: pgtype.Text{},
+	})
+	if err != nil {
+		return db.AppInterviewPlan{}, err
+	}
+	for i, qu := range parsed.QuestionPlan.Questions {
+		orderIdx := int32(i)
+		if qu.OrderIndex >= 0 {
+			orderIdx = int32(qu.OrderIndex)
+		}
+		criterionID := pgtype.UUID{Valid: false}
+		if name := strings.TrimSpace(qu.CriterionName); name != "" {
+			if id, ok := criterionIDByName[name]; ok {
+				criterionID = id
+			}
+		}
+		_, err := q.CreateInterviewQuestion(ctx, db.CreateInterviewQuestionParams{
+			InterviewPlanID:   pgtype.UUID{Bytes: plan.InterviewPlanID.Bytes, Valid: true},
+			RubricCriterionID: criterionID,
+			Prompt:            strings.TrimSpace(qu.Prompt),
+			QuestionType:      "open",
+			OrderIndex:        orderIdx,
+			IsActive:          true,
+			FollowUpToID:      pgtype.UUID{},
+			FollowUpCondition: pgtype.Text{},
+		})
+		if err != nil {
+			return db.AppInterviewPlan{}, err
+		}
+	}
+	return plan, nil
 }
 
 // ParseRubric runs LLM one-shot parse, validates, and stores criteria + interview plan.
@@ -398,111 +574,83 @@ func (h *RubricHandler) ParseRubric(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := h.q.WithTx(tx)
 
-	// Replace existing: delete plans (cascades to questions), then criteria
-	if err := q.DeletePlansByRubric(ctx, rubricIDPg); err != nil {
-		http.Error(w, "failed to clear existing plans", http.StatusInternalServerError)
-		return
-	}
-	if err := q.DeleteCriteriaByRubric(ctx, rubricIDPg); err != nil {
-		http.Error(w, "failed to clear existing criteria", http.StatusInternalServerError)
-		return
-	}
-
-	// Create criteria and collect IDs by name for linking questions
-	criterionIDByName := make(map[string]pgtype.UUID)
-	descPg := func(s string) pgtype.Text {
-		t := pgtype.Text{}
-		if s != "" {
-			t.String = s
-			t.Valid = true
-		}
-		return t
-	}
-	for i, c := range parsed.Criteria {
-		weightVal := c.Weight
-		if weightVal <= 0 {
-			weightVal = 1.0
-		}
-		weight := pgtype.Numeric{
-			Int:   big.NewInt(int64(math.Round(weightVal * 100))),
-			Exp:   -2,
-			Valid: true,
-		}
-		levelsJSON := []byte("null")
-		if len(c.Levels) > 0 {
-			levelsJSON, _ = json.Marshal(c.Levels)
-		}
-		orderIdx := int32(i)
-		if c.OrderIndex >= 0 {
-			orderIdx = int32(c.OrderIndex)
-		}
-		created, err := q.CreateRubricCriterion(ctx, db.CreateRubricCriterionParams{
-			RubricID:    rubricIDPg,
-			Name:        strings.TrimSpace(c.Name),
-			Description: descPg(c.Description),
-			Weight:      weight,
-			OrderIndex:  orderIdx,
-			Levels:      levelsJSON,
-		})
-		if err != nil {
-			http.Error(w, "failed to create criterion: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		criterionIDByName[strings.TrimSpace(c.Name)] = created.RubricCriterionID
-	}
-
-	// Create interview plan
-	planTitle := strings.TrimSpace(parsed.QuestionPlan.Title)
-	if planTitle == "" {
-		planTitle = rubric.Title + " – Interview plan"
-	}
-	instructionsPg := pgtype.Text{}
-	if parsed.QuestionPlan.Instructions != "" {
-		instructionsPg.String = parsed.QuestionPlan.Instructions
-		instructionsPg.Valid = true
-	}
-	plan, err := q.CreateInterviewPlan(ctx, db.CreateInterviewPlanParams{
-		RubricID:            rubricIDPg,
-		Title:               planTitle,
-		Instructions:        instructionsPg,
-		Config:              []byte("{}"),
-		Status:              string(db.AppInterviewStatusDraft),
-		CurriculumSubject:   pgtype.Text{},
-		CurriculumLevelBand: pgtype.Text{},
-	})
+	plan, err := storeCriteriaAndPlan(ctx, q, rubricIDPg, rubric.Title, parsed)
 	if err != nil {
-		http.Error(w, "failed to create interview plan: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
 
-	// Create questions (optionally link to criterion by name)
-	for i, qu := range parsed.QuestionPlan.Questions {
-		orderIdx := int32(i)
-		if qu.OrderIndex >= 0 {
-			orderIdx = int32(qu.OrderIndex)
-		}
-		criterionID := pgtype.UUID{Valid: false}
-		if name := strings.TrimSpace(qu.CriterionName); name != "" {
-			if id, ok := criterionIDByName[name]; ok {
-				criterionID = id
-			}
-		}
-		_, err := q.CreateInterviewQuestion(ctx, db.CreateInterviewQuestionParams{
-			InterviewPlanID:   pgtype.UUID{Bytes: plan.InterviewPlanID.Bytes, Valid: true},
-			RubricCriterionID: criterionID,
-			Prompt:            strings.TrimSpace(qu.Prompt),
-			QuestionType:      "open",
-			OrderIndex:        orderIdx,
-			IsActive:          true,
-			FollowUpToID:      pgtype.UUID{},
-			FollowUpCondition: pgtype.Text{},
-		})
-		if err != nil {
-			http.Error(w, "failed to create question: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+	var planID uuid.UUID
+	if plan.InterviewPlanID.Valid {
+		planID = plan.InterviewPlanID.Bytes
+	}
+	resp := ParseRubricResponse{
+		RubricID:        rubricID,
+		CriteriaCount:   len(parsed.Criteria),
+		InterviewPlanID: planID,
+		QuestionCount:   len(parsed.QuestionPlan.Questions),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// PutCriteriaAndPlan replaces criteria and interview plan for a rubric with the request body (same shape as parser output).
+// Teacher can fix parser mistakes by editing and submitting. Expects rubric ID in path.
+func (h *RubricHandler) PutCriteriaAndPlan(w http.ResponseWriter, r *http.Request) {
+	rubricIDStr := chi.URLParam(r, "id")
+	if rubricIDStr == "" {
+		http.Error(w, "rubric id is required", http.StatusBadRequest)
+		return
+	}
+	rubricID, err := uuid.Parse(rubricIDStr)
+	if err != nil {
+		http.Error(w, "invalid rubric id", http.StatusBadRequest)
+		return
+	}
+	if h.txBeginner == nil {
+		http.Error(w, "database transactions not available", http.StatusServiceUnavailable)
+		return
 	}
 
+	var parsed rubricparser.ParseRubricOutput
+	if err := json.NewDecoder(r.Body).Decode(&parsed); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if err := rubricparser.Validate(&parsed); err != nil {
+		http.Error(w, "validation failed: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	ctx := r.Context()
+	rubricIDPg := pgtype.UUID{Bytes: rubricID, Valid: true}
+	rubric, err := h.q.GetRubricByID(ctx, rubricIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "rubric not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get rubric", http.StatusInternalServerError)
+		return
+	}
+
+	tx, err := h.txBeginner.Begin(ctx)
+	if err != nil {
+		http.Error(w, "failed to start transaction", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := h.q.WithTx(tx)
+	plan, err := storeCriteriaAndPlan(ctx, q, rubricIDPg, rubric.Title, &parsed)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		http.Error(w, "failed to commit transaction", http.StatusInternalServerError)
 		return

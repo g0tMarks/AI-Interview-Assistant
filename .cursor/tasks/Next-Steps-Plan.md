@@ -46,13 +46,13 @@ Do these in sequence so each step has the right foundation.
 
 | # | Step | Notes / dependencies |
 |---|------|----------------------|
-| **1** | **Students / classes / roster tables + SQLC + CRUD** | Add `app.students`, `app.classes`, `app.roster` (e.g. class_id, student_id, role). Run sqlc generate; add queries and CRUD handlers. Optionally link `app.interviews.student_id` to `app.students` later. |
-| **2** | **Student auth MVP (magic link or class code) + JWT middleware** | Magic link (email token) or class-code flow; issue JWT. Add middleware to validate JWT and set identity on context. Protect student-facing routes. |
-| **3** | **Uploads + file storage abstraction** | Multipart upload endpoint(s); abstraction (e.g. interface) for store (local/S3). Used by rubric file upload and later by other assets. |
-| **4** | **Bulk student roster upload (.xlsx)** | Teacher uploads .xlsx with columns: first name, last name, email. Parse file (e.g. excelize), create students or match by email, add all to specified class roster. Endpoint e.g. POST /classes/{id}/roster/upload. Depends on uploads (multipart) and classes/roster. |
+| **1** | **Students / classes / roster tables + SQLC + CRUD** | ✅ **Done** — Add `app.students`, `app.classes`, `app.roster` (e.g. class_id, student_id, role). Run sqlc generate; add queries and CRUD handlers. Optionally link `app.interviews.student_id` to `app.students` later. |
+| **2** | **Student auth MVP (magic link or class code) + JWT middleware** | ✅ **Done** — Magic link (email token) or class-code flow; issue JWT. Add middleware to validate JWT and set identity on context. Protect student-facing routes. |
+| **3** | **Uploads + file storage abstraction** | ✅ **Done** — Multipart upload endpoint(s); abstraction (e.g. interface) for store (local/S3). Used by rubric file upload and later by other assets. |
+| **4** | **Bulk student roster upload (.xlsx)** | ✅ **Done** — Teacher uploads .xlsx with columns: first name, last name, email. Parse file (e.g. excelize), create students or match by email, add all to specified class roster. Endpoint e.g. POST /classes/{id}/roster/upload. Depends on uploads (multipart) and classes/roster. |
 | **5** | **Text extraction for PDF/DOCX → raw text** | ✅ **Done** — Use uploads + storage; extract text; store in `rubrics.raw_text` and return in API. PDF: ledongthuc/pdf; DOCX: mydocx (no commercial license). |
-| **6** | **Rubric parser (LLM one-shot) + validation + store** | Use an LLM to parse raw text in one shot → (1) criteria JSON + (2) initial question plan. Validate JSON shape. Store criteria + plan. Teacher can edit criteria/plan (Step #7). |
-| **7** | **Rubric version editing endpoint** | PATCH /rubrics/{id} and/or PATCH /rubrics/{id}/criteria and plan. Teacher can fix parser mistakes and edit criteria/plan. Requires UpdateRubric / update criteria and plan in SQLC if not present. |
+| **6** | **Rubric parser (LLM one-shot) + validation + store** | ✅ **Done** — Use an LLM to parse raw text in one shot → (1) criteria JSON + (2) initial question plan. Validate JSON shape. Store criteria + plan. Teacher can edit criteria/plan (Step #7). |
+| **7** | **Rubric version editing endpoint** | ✅ **Done** — PATCH /rubrics/{id} and PUT /rubrics/{id}/criteria-and-plan. Teacher can fix parser mistakes and edit criteria/plan. UpdateRubric in SQLC; shared store logic for criteria+plan. |
 | **8** | **Interview_messages table + endpoints** | Table and SQLC exist. Add: POST /interviews/{id}/messages, GET /interviews/{id}/messages. Used by engine and frontend. |
 | **9** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); use LLM API for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
 | **10** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
@@ -169,6 +169,16 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 
 **Teacher edit** (criteria/plan) is Step #7 (PATCH /rubrics/{id} etc.).
 
+**Step #7 – Rubric version editing endpoint** — ✅ **Done**
+
+1. **UpdateRubric** (`backend/internal/db/queries/rubrics.sql`): UPDATE rubrics SET title/description/raw_text (COALESCE with existing when not provided), updated_at. Regenerated sqlc.
+2. **PATCH /rubrics/{id}** (`handlers/rubrics.go`): Body `{ "title?", "description?", "rawText?" }` — only provided fields are updated. Returns updated rubric.
+3. **PUT /rubrics/{id}/criteria-and-plan** (`handlers/rubrics.go`): Body is same shape as parser output (`criteria`, `questionPlan`). Validated with `rubricparser.Validate`. Replaces existing criteria and plan in a transaction (delete plans, delete criteria, create criteria, create plan, create questions). Returns `{ rubricId, criteriaCount, interviewPlanId, questionCount }`.
+4. **Shared helper** `storeCriteriaAndPlan(ctx, q, rubricIDPg, rubricTitle, parsed)` used by both ParseRubric and PutCriteriaAndPlan.
+5. **Routes** (`router.go`): `PATCH /rubrics/{id}`, `PUT /rubrics/{id}/criteria-and-plan`.
+
+**Usage:** PATCH to update title/description/rawText. PUT criteria-and-plan after editing the parsed criteria/question plan in the UI (e.g. fix parser mistakes).
+
 ---
 
 ## 5. File Reference
@@ -184,6 +194,7 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 | Roster upload | `backend/internal/api/handlers/roster.go` (UploadRoster method), `backend/api_test/test-roster-upload.sh` |
 | Text extraction | `backend/internal/extraction/extraction.go`, `backend/internal/api/handlers/rubrics.go` (UploadRubricFile), `backend/api_test/test-rubric-upload.sh` |
 | Rubric parser | `backend/internal/rubricparser/`, `handlers/rubrics.go` (ParseRubric), `services/llm.go` (ParseRubric), `api_test/test-rubric-parse.sh` |
+| Rubric edit | `handlers/rubrics.go` (PatchRubric, PutCriteriaAndPlan, storeCriteriaAndPlan), `db/queries/rubrics.sql` (UpdateRubric) |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

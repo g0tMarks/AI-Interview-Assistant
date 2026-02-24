@@ -14,6 +14,15 @@ FROM app.rubrics
 WHERE teacher_id = @teacher_id::uuid
 ORDER BY created_at DESC;
 
+-- name: UpdateRubric :one
+UPDATE app.rubrics
+SET title = COALESCE(sqlc.narg('title'), title),
+    description = COALESCE(sqlc.narg('description'), description),
+    raw_text = COALESCE(sqlc.narg('raw_text'), raw_text),
+    updated_at = NOW()
+WHERE rubric_id = @rubric_id::uuid
+RETURNING *;
+
 -- name: DisableRubric :exec
 UPDATE app.rubrics
 SET is_enabled = FALSE,

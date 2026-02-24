@@ -114,3 +114,41 @@ func (q *Queries) ListRubricsByTeacher(ctx context.Context, teacherID pgtype.UUI
 	}
 	return items, nil
 }
+
+const updateRubric = `-- name: UpdateRubric :one
+UPDATE app.rubrics
+SET title = COALESCE($1, title),
+    description = COALESCE($2, description),
+    raw_text = COALESCE($3, raw_text),
+    updated_at = NOW()
+WHERE rubric_id = $4::uuid
+RETURNING rubric_id, teacher_id, title, description, raw_text, is_enabled, created_at, updated_at
+`
+
+type UpdateRubricParams struct {
+	Title       pgtype.Text `db:"title" json:"title"`
+	Description pgtype.Text `db:"description" json:"description"`
+	RawText     pgtype.Text `db:"raw_text" json:"rawText"`
+	RubricID    pgtype.UUID `db:"rubric_id" json:"rubricId"`
+}
+
+func (q *Queries) UpdateRubric(ctx context.Context, arg UpdateRubricParams) (AppRubric, error) {
+	row := q.db.QueryRow(ctx, updateRubric,
+		arg.Title,
+		arg.Description,
+		arg.RawText,
+		arg.RubricID,
+	)
+	var i AppRubric
+	err := row.Scan(
+		&i.RubricID,
+		&i.TeacherID,
+		&i.Title,
+		&i.Description,
+		&i.RawText,
+		&i.IsEnabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
