@@ -1,0 +1,23 @@
+Interview-Assistant main  ❯ ./backend/api_test/test-rubric-parse.sh 8b960931-ecbb-498f-b941-de2e6d263e92
+==========================================
+Testing POST /rubrics/{id}/parse
+==========================================
+Rubric ID: 8b960931-ecbb-498f-b941-de2e6d263e92
+
+POST /rubrics/8b960931-ecbb-498f-b941-de2e6d263e92/parse
+Response:
+{
+  "rubricId": "8b960931-ecbb-498f-b941-de2e6d263e92",
+  "criteriaCount": 5,
+  "interviewPlanId": "2f378a26-e434-4b6b-ab11-2b91ed6d45fa",
+  "questionCount": 10
+}
+
+HTTP Status: 200
+
+✓ Parse completed
+  Criteria created: 5
+  Questions created: 10
+  Interview plan ID: 2f378a26-e434-4b6b-ab11-2b91ed6d45fa
+
+Test completed!

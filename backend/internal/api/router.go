@@ -7,6 +7,7 @@ import (
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api/handlers"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api/middleware"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/evaluation"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -23,7 +24,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	teacherHandler := handlers.NewTeacherHandler(deps.Queries)
 	templateHandler := handlers.NewInterviewTemplateHandler(deps.Queries, deps.LLMService)
 	interviewEngine := engine.NewEngine(deps.Queries, deps.LLMService)
-	interviewHandler := handlers.NewInterviewHandler(deps.Queries, interviewEngine)
+	evalRunner := evaluation.NewRunner(deps.Queries, deps.LLMService)
+	interviewHandler := handlers.NewInterviewHandler(deps.Queries, interviewEngine, evalRunner)
 	studentHandler := handlers.NewStudentHandler(deps.Queries)
 	classHandler := handlers.NewClassHandler(deps.Queries)
 	rosterHandler := handlers.NewRosterHandler(deps.Queries)
@@ -45,6 +47,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Get("/interviews/{id}/messages", interviewHandler.ListMessages)
 	r.Get("/interviews/{id}/next", interviewHandler.GetNext)
 	r.Post("/interviews/{id}/next", interviewHandler.PostNext)
+	r.Get("/interviews/{id}/results", interviewHandler.GetResults)
+	r.Get("/interviews/{id}/summary", interviewHandler.GetSummary)
 	r.Post("/uploads", uploadHandler.Upload)
 	r.Get("/uploads/{key}", uploadHandler.Download)
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/evaluation"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/rubricparser"
 )
 
@@ -24,12 +25,14 @@ const (
 	ResponseCategoryDontKnow     = "dont_know"
 )
 
-// LLMService provides an interface for generating interview instructions, parsing rubrics, and classifying responses.
+// LLMService provides an interface for generating interview instructions, parsing rubrics, classifying responses, and evaluating interviews.
 type LLMService interface {
 	GenerateInterviewInstructions(ctx context.Context, rubricTitle string, rubricRawText string) (string, error)
 	ParseRubric(ctx context.Context, rubricTitle string, rawText string) (*rubricparser.ParseRubricOutput, error)
 	// ClassifyResponse returns the response category for branching (strong, partial, incorrect, misconception, dont_know).
 	ClassifyResponse(ctx context.Context, questionPrompt string, userResponse string) (string, error)
+	// EvaluateInterview produces a summary and per-criterion evaluation from a conversation transcript.
+	EvaluateInterview(ctx context.Context, rubricTitle string, criteria []evaluation.CriterionForEval, transcript string) (*evaluation.EvalOutput, error)
 }
 
 // OpenAIService implements LLMService using OpenAI API (or Anthropic as fallback)
@@ -329,6 +332,71 @@ Reply with only the single classification word, nothing else.`, questionPrompt, 
 	}
 	// Fallback if model returns something else
 	return ResponseCategoryPartial, nil
+}
+
+// EvaluateInterview produces a summary and per-criterion evaluation from a conversation transcript.
+func (s *OpenAIService) EvaluateInterview(ctx context.Context, rubricTitle string, criteria []evaluation.CriterionForEval, transcript string) (*evaluation.EvalOutput, error) {
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("LLM API key not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+	}
+	if strings.TrimSpace(transcript) == "" {
+		return nil, fmt.Errorf("transcript is empty")
+	}
+
+	var criteriaBlock strings.Builder
+	for i, c := range criteria {
+		criteriaBlock.WriteString(fmt.Sprintf("  %d. %s: %s", i+1, c.Name, c.Description))
+		if c.LevelsJSON != "" {
+			criteriaBlock.WriteString(" (levels: " + c.LevelsJSON + ")")
+		}
+		criteriaBlock.WriteString("\n")
+	}
+
+	prompt := fmt.Sprintf(`You are an expert educational assessor. Evaluate this interview transcript against the given rubric criteria and produce a structured summary and per-criterion evidence.
+
+Rubric title: %s
+
+Criteria:
+%s
+
+Interview transcript (alternating AI and student):
+%s
+
+Respond with a single JSON object only, no other text or markdown. Use exactly this shape:
+{
+  "overallSummary": "2-4 sentence summary of the student's performance.",
+  "strengths": "Key strengths demonstrated.",
+  "areasForGrowth": "Areas to improve.",
+  "suggestedNextSteps": "Concrete next steps for the teacher.",
+  "criteria": [
+    {
+      "criterionName": "exact name from the criteria list above",
+      "level": "e.g. A, B, C or Developing, Proficient",
+      "evidenceText": "Brief evidence from the transcript supporting this level.",
+      "modelConfidence": 0.85
+    }
+  ]
+}
+
+Include one object in "criteria" for each criterion listed above. modelConfidence should be between 0 and 1.`, rubricTitle, criteriaBlock.String(), transcript)
+
+	var raw string
+	var err error
+	if s.useAnthropic {
+		raw, err = s.callAnthropicAPI(ctx, prompt)
+	} else {
+		raw, err = s.callOpenAIAPI(ctx, prompt)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("LLM evaluate: %w", err)
+	}
+
+	jsonBytes := extractJSON(raw)
+	var out evaluation.EvalOutput
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		return nil, fmt.Errorf("LLM returned invalid JSON: %w", err)
+	}
+	return &out, nil
 }
 
 // extractJSON finds JSON in the response, stripping optional markdown code fences.

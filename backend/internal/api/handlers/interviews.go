@@ -13,15 +13,17 @@ import (
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/evaluation"
 )
 
 type InterviewHandler struct {
-	q     *db.Queries
-	eng   *engine.Engine
+	q    *db.Queries
+	eng  *engine.Engine
+	eval *evaluation.Runner
 }
 
-func NewInterviewHandler(q *db.Queries, eng *engine.Engine) *InterviewHandler {
-	return &InterviewHandler{q: q, eng: eng}
+func NewInterviewHandler(q *db.Queries, eng *engine.Engine, eval *evaluation.Runner) *InterviewHandler {
+	return &InterviewHandler{q: q, eng: eng, eval: eval}
 }
 
 type CreateInterviewRequest struct {
@@ -586,5 +588,238 @@ func nextResultToResponse(r *engine.NextResult) NextResponse {
 		ClassifiedCategory:   r.ClassifiedCategory,
 	}
 	return resp
+}
+
+// ResultsResponse is the JSON shape for GET /interviews/{id}/results.
+type ResultsResponse struct {
+	InterviewID       uuid.UUID                 `json:"interviewId"`
+	Status            string                     `json:"status"`
+	OverallSummary   string                     `json:"overallSummary"`
+	Strengths         string                     `json:"strengths"`
+	AreasForGrowth    string                     `json:"areasForGrowth"`
+	SuggestedNextSteps string                    `json:"suggestedNextSteps"`
+	CriterionEvidence []CriterionEvidenceResponse `json:"criterionEvidence"`
+	Scoring           *evaluation.ScoringJSON    `json:"scoring,omitempty"`
+}
+
+// CriterionEvidenceResponse is one criterion's evidence in the results.
+type CriterionEvidenceResponse struct {
+	CriterionEvidenceID uuid.UUID  `json:"criterionEvidenceId"`
+	RubricCriterionID   uuid.UUID  `json:"rubricCriterionId"`
+	Level               string     `json:"level"`
+	EvidenceText        string     `json:"evidenceText"`
+	ModelConfidence     *float64   `json:"modelConfidence,omitempty"`
+}
+
+// GetResults handles GET /interviews/{id}/results. If the interview is completed but not yet evaluated, runs evaluation then returns results.
+func (h *InterviewHandler) GetResults(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		http.Error(w, "interview ID is required", http.StatusBadRequest)
+		return
+	}
+	interviewID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid interview ID format", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+
+	interviewIDPg := pgtype.UUID{Bytes: interviewID, Valid: true}
+	inv, err := h.q.GetInterviewByID(ctx, interviewIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "interview not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get interview: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if inv.Status != "completed" {
+		http.Error(w, "interview is not completed", http.StatusBadRequest)
+		return
+	}
+
+	if h.eval != nil {
+		if err := h.eval.Run(ctx, interviewID); err != nil {
+			http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	summary, err := h.q.GetSummaryByInterviewID(ctx, interviewIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "results not available", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get summary: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	evidenceList, err := h.q.GetCriterionEvidenceBySummaryID(ctx, summary.InterviewSummaryID)
+	if err != nil {
+		http.Error(w, "failed to get criterion evidence: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	overallSummary := ""
+	if summary.OverallSummary.Valid {
+		overallSummary = summary.OverallSummary.String
+	}
+	strengths := ""
+	if summary.Strengths.Valid {
+		strengths = summary.Strengths.String
+	}
+	areasForGrowth := ""
+	if summary.AreasForGrowth.Valid {
+		areasForGrowth = summary.AreasForGrowth.String
+	}
+	suggestedNextSteps := ""
+	if summary.SuggestedNextSteps.Valid {
+		suggestedNextSteps = summary.SuggestedNextSteps.String
+	}
+
+	evidenceResp := make([]CriterionEvidenceResponse, len(evidenceList))
+	for i, e := range evidenceList {
+		level := ""
+		if e.Level.Valid {
+			level = e.Level.String
+		}
+		evidenceText := ""
+		if e.EvidenceText.Valid {
+			evidenceText = e.EvidenceText.String
+		}
+		var criterionID, evidenceID uuid.UUID
+		if e.RubricCriterionID.Valid {
+			criterionID = e.RubricCriterionID.Bytes
+		}
+		if e.CriterionEvidenceID.Valid {
+			evidenceID = e.CriterionEvidenceID.Bytes
+		}
+		var confidence *float64
+		if e.ModelConfidence.Valid {
+			f := numericToFloat64(e.ModelConfidence)
+			confidence = &f
+		}
+		evidenceResp[i] = CriterionEvidenceResponse{
+			CriterionEvidenceID: evidenceID,
+			RubricCriterionID:   criterionID,
+			Level:               level,
+			EvidenceText:        evidenceText,
+			ModelConfidence:     confidence,
+		}
+	}
+
+	var scoring *evaluation.ScoringJSON
+	if len(summary.RawLlmOutput) > 0 {
+		if err := json.Unmarshal(summary.RawLlmOutput, &scoring); err == nil {
+			// use parsed scoring for consistent API shape
+		}
+	}
+
+	resp := ResultsResponse{
+		InterviewID:        interviewID,
+		Status:             inv.Status,
+		OverallSummary:    overallSummary,
+		Strengths:          strengths,
+		AreasForGrowth:     areasForGrowth,
+		SuggestedNextSteps: suggestedNextSteps,
+		CriterionEvidence:  evidenceResp,
+		Scoring:            scoring,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// numericToFloat64 converts pgtype.Numeric to float64 (value = Int * 10^Exp, e.g. 85 and -2 -> 0.85).
+func numericToFloat64(n pgtype.Numeric) float64 {
+	if !n.Valid || n.Int == nil {
+		return 0
+	}
+	f, _ := n.Int.Float64()
+	exp := n.Exp
+	for exp < 0 {
+		f *= 0.1
+		exp++
+	}
+	for exp > 0 {
+		f *= 10
+		exp--
+	}
+	return f
+}
+
+// SummaryResponse is the JSON shape for GET /interviews/{id}/summary.
+type SummaryResponse struct {
+	InterviewSummaryID uuid.UUID `json:"interviewSummaryId"`
+	InterviewID        uuid.UUID `json:"interviewId"`
+	OverallSummary    string    `json:"overallSummary"`
+	Strengths         string    `json:"strengths"`
+	AreasForGrowth    string    `json:"areasForGrowth"`
+	SuggestedNextSteps string   `json:"suggestedNextSteps"`
+}
+
+// GetSummary handles GET /interviews/{id}/summary. Returns the summary only (no criterion evidence).
+func (h *InterviewHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		http.Error(w, "interview ID is required", http.StatusBadRequest)
+		return
+	}
+	interviewID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid interview ID format", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+
+	interviewIDPg := pgtype.UUID{Bytes: interviewID, Valid: true}
+	summary, err := h.q.GetSummaryByInterviewID(ctx, interviewIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "summary not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get summary: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var summaryID, invID uuid.UUID
+	if summary.InterviewSummaryID.Valid {
+		summaryID = summary.InterviewSummaryID.Bytes
+	}
+	if summary.InterviewID.Valid {
+		invID = summary.InterviewID.Bytes
+	}
+	overallSummary := ""
+	if summary.OverallSummary.Valid {
+		overallSummary = summary.OverallSummary.String
+	}
+	strengths := ""
+	if summary.Strengths.Valid {
+		strengths = summary.Strengths.String
+	}
+	areasForGrowth := ""
+	if summary.AreasForGrowth.Valid {
+		areasForGrowth = summary.AreasForGrowth.String
+	}
+	suggestedNextSteps := ""
+	if summary.SuggestedNextSteps.Valid {
+		suggestedNextSteps = summary.SuggestedNextSteps.String
+	}
+
+	resp := SummaryResponse{
+		InterviewSummaryID:  summaryID,
+		InterviewID:         invID,
+		OverallSummary:     overallSummary,
+		Strengths:          strengths,
+		AreasForGrowth:     areasForGrowth,
+		SuggestedNextSteps: suggestedNextSteps,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 

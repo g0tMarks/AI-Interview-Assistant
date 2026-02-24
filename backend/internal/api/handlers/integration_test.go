@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/evaluation"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/rubricparser"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/validation"
 )
@@ -149,7 +152,8 @@ func TestCreateRubricTemplateInterviewFlow(t *testing.T) {
 	rubricHandler := NewRubricHandler(queries, nil, nil)
 	templateHandler := NewInterviewTemplateHandler(queries, llmService)
 	interviewEngine := engine.NewEngine(queries, llmService)
-	interviewHandler := NewInterviewHandler(queries, interviewEngine)
+	evalRunner := evaluation.NewRunner(queries, llmService)
+	interviewHandler := NewInterviewHandler(queries, interviewEngine, evalRunner)
 
 	// Task 2: Create Rubric
 	t.Log("Task 2: Creating rubric...")
@@ -466,6 +470,259 @@ func TestCreateRubricTemplateInterviewFlow(t *testing.T) {
 	t.Logf("Rubric ID: %v", rubricID)
 	t.Logf("Teacher ID: %v", teacherID)
 	t.Logf("Number of messages: %d", len(messages))
+}
+
+// mockLLMForGoldenPath implements LLMService for the golden-path test (no API key required).
+type mockLLMForGoldenPath struct{}
+
+func (m *mockLLMForGoldenPath) GenerateInterviewInstructions(ctx context.Context, rubricTitle, rubricRawText string) (string, error) {
+	return "Mock instructions", nil
+}
+func (m *mockLLMForGoldenPath) ParseRubric(ctx context.Context, rubricTitle, rawText string) (*rubricparser.ParseRubricOutput, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockLLMForGoldenPath) ClassifyResponse(ctx context.Context, questionPrompt, userResponse string) (string, error) {
+	return services.ResponseCategoryStrong, nil
+}
+func (m *mockLLMForGoldenPath) EvaluateInterview(ctx context.Context, rubricTitle string, criteria []evaluation.CriterionForEval, transcript string) (*evaluation.EvalOutput, error) {
+	conf := 0.9
+	return &evaluation.EvalOutput{
+		OverallSummary:     "Student demonstrated understanding.",
+		Strengths:           "Clear communication.",
+		AreasForGrowth:      "Could add more detail.",
+		SuggestedNextSteps:  "Practice extended responses.",
+		Criteria: []evaluation.EvalCriterion{
+			{CriterionName: "Understanding", Level: "B", EvidenceText: "Student answered correctly.", ModelConfidence: &conf},
+		},
+	}, nil
+}
+
+// TestGoldenPathFullFlow runs: teacher → rubric → template → add criterion + question + branch → interview → POST /next until done → GET results.
+func TestGoldenPathFullFlow(t *testing.T) {
+	conn, queries := setupTestDB(t)
+	defer teardownTestDB(t, conn)
+
+	ctx := context.Background()
+	teacherID := createTestTeacher(t, queries, ctx)
+	defer cleanupTestData(t, queries, ctx, teacherID)
+
+	mockLLM := &mockLLMForGoldenPath{}
+	rubricHandler := NewRubricHandler(queries, nil, nil)
+	templateHandler := NewInterviewTemplateHandler(queries, mockLLM)
+	interviewEngine := engine.NewEngine(queries, mockLLM)
+	evalRunner := evaluation.NewRunner(queries, mockLLM)
+	interviewHandler := NewInterviewHandler(queries, interviewEngine, evalRunner)
+
+	// Create rubric
+	createRubricReq := CreateRubricRequest{
+		TeacherID:   teacherID,
+		Title:       "Golden Path Rubric",
+		Description: "For golden path test",
+		RawText:     "Understands key concepts. Explains clearly.",
+	}
+	reqBody, _ := json.Marshal(createRubricReq)
+	req := httptest.NewRequest("POST", "/rubrics", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	rubricHandler.CreateRubric(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create rubric: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var rubricResp RubricResponse
+	if err := json.NewDecoder(w.Body).Decode(&rubricResp); err != nil {
+		t.Fatalf("decode rubric: %v", err)
+	}
+	rubricID := rubricResp.RubricID
+
+	// Create template (plan)
+	createTemplateReq := CreateInterviewTemplateRequest{
+		RubricID:            rubricID,
+		Title:               "Golden Path Plan",
+		Instructions:        "Ask one question.",
+		Config:              json.RawMessage(`{}`),
+		Status:              "in_progress",
+		CurriculumSubject:   "",
+		CurriculumLevelBand: "",
+	}
+	reqBody, _ = json.Marshal(createTemplateReq)
+	req = httptest.NewRequest("POST", "/interview-templates", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	templateHandler.CreateInterviewTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create template: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var templateResp InterviewTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&templateResp); err != nil {
+		t.Fatalf("decode template: %v", err)
+	}
+	interviewPlanID := templateResp.InterviewPlanID
+
+	// Add one rubric criterion and one interview question + branch so /next returns one question then "done"
+	rubricIDPg := pgtype.UUID{Bytes: rubricID, Valid: true}
+	planIDPg := pgtype.UUID{Bytes: interviewPlanID, Valid: true}
+	criterion, err := queries.CreateRubricCriterion(ctx, db.CreateRubricCriterionParams{
+		RubricID:    rubricIDPg,
+		Name:        "Understanding",
+		Description: pgtype.Text{String: "Demonstrates understanding", Valid: true},
+		Weight:      pgtype.Numeric{Int: big.NewInt(100), Exp: -2, Valid: true},
+		OrderIndex:  0,
+		Levels:      nil,
+	})
+	if err != nil {
+		t.Fatalf("create criterion: %v", err)
+	}
+	criterionIDPg := criterion.RubricCriterionID
+	question, err := queries.CreateInterviewQuestion(ctx, db.CreateInterviewQuestionParams{
+		InterviewPlanID:   planIDPg,
+		RubricCriterionID: criterionIDPg,
+		Prompt:             "What is the main idea?",
+		QuestionType:      "open",
+		OrderIndex:         0,
+		IsActive:           true,
+		FollowUpToID:       pgtype.UUID{},
+		FollowUpCondition:  pgtype.Text{},
+	})
+	if err != nil {
+		t.Fatalf("create question: %v", err)
+	}
+	questionIDPg := question.InterviewQuestionID
+	_, err = queries.CreateInterviewQuestionBranch(ctx, db.CreateInterviewQuestionBranchParams{
+		ParentQuestionID:       questionIDPg,
+		ResponseCategory:       "strong",
+		MisconceptionTagID:     pgtype.UUID{},
+		NextQuestionID:         pgtype.UUID{},
+		FollowUpPromptOverride: pgtype.Text{},
+		TerminateInterview:     true,
+		OrderIndex:             0,
+	})
+	if err != nil {
+		t.Fatalf("create branch: %v", err)
+	}
+
+	// Create interview
+	createInterviewReq := CreateInterviewRequest{
+		InterviewPlanID: interviewPlanID,
+		TeacherID:       teacherID,
+		Simulated:       boolPtr(true),
+		StudentName:     "Student",
+		Status:          "in_progress",
+	}
+	reqBody, _ = json.Marshal(createInterviewReq)
+	req = httptest.NewRequest("POST", "/interviews", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	interviewHandler.CreateInterview(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create interview: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var interviewResp InterviewResponse
+	if err := json.NewDecoder(w.Body).Decode(&interviewResp); err != nil {
+		t.Fatalf("decode interview: %v", err)
+	}
+	interviewID := interviewResp.InterviewID
+
+	// Route for interview sub-resources (so chi sets URL param "id")
+	r := chi.NewRouter()
+	r.Post("/interviews", interviewHandler.CreateInterview)
+	r.Get("/interviews/{id}", interviewHandler.GetInterview)
+	r.Post("/interviews/{id}/messages", interviewHandler.CreateMessage)
+	r.Get("/interviews/{id}/messages", interviewHandler.ListMessages)
+	r.Get("/interviews/{id}/next", interviewHandler.GetNext)
+	r.Post("/interviews/{id}/next", interviewHandler.PostNext)
+	r.Get("/interviews/{id}/results", interviewHandler.GetResults)
+
+	// POST /next — should return next_question (first question)
+	req = httptest.NewRequest("POST", "/interviews/"+interviewID.String()+"/next", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first POST /next: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var nextResp NextResponse
+	if err := json.NewDecoder(w.Body).Decode(&nextResp); err != nil {
+		t.Fatalf("decode next: %v", err)
+	}
+	if nextResp.Status != "next_question" {
+		t.Fatalf("first /next: expected status next_question, got %s", nextResp.Status)
+	}
+
+	// POST user message
+	msgBody, _ := json.Marshal(CreateInterviewMessageRequest{Sender: "user", Content: "The main idea is that we need to understand key concepts."})
+	req = httptest.NewRequest("POST", "/interviews/"+interviewID.String()+"/messages", bytes.NewReader(msgBody))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST message: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// POST /next — should return done and mark interview completed
+	req = httptest.NewRequest("POST", "/interviews/"+interviewID.String()+"/next", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second POST /next: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&nextResp); err != nil {
+		t.Fatalf("decode next: %v", err)
+	}
+	if nextResp.Status != "done" {
+		t.Fatalf("second /next: expected status done, got %s", nextResp.Status)
+	}
+
+	// GET /interviews/{id} — assert status is completed
+	req = httptest.NewRequest("GET", "/interviews/"+interviewID.String(), nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET interview: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&interviewResp); err != nil {
+		t.Fatalf("decode interview: %v", err)
+	}
+	if interviewResp.Status != "completed" {
+		t.Fatalf("interview status: expected completed, got %s", interviewResp.Status)
+	}
+
+	// GET /interviews/{id}/results — triggers evaluation, returns summary + scoring
+	req = httptest.NewRequest("GET", "/interviews/"+interviewID.String()+"/results", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET results: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resultsResp ResultsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resultsResp); err != nil {
+		t.Fatalf("decode results: %v", err)
+	}
+	if resultsResp.InterviewID != interviewID {
+		t.Fatalf("results interviewId: expected %v, got %v", interviewID, resultsResp.InterviewID)
+	}
+	if resultsResp.Status != "completed" {
+		t.Fatalf("results status: expected completed, got %s", resultsResp.Status)
+	}
+	if resultsResp.OverallSummary == "" {
+		t.Fatal("results: expected non-empty overallSummary")
+	}
+	if len(resultsResp.CriterionEvidence) == 0 {
+		t.Fatal("results: expected at least one criterion evidence")
+	}
+	if resultsResp.Scoring == nil {
+		t.Fatal("results: expected non-nil scoring")
+	}
+	if resultsResp.Scoring.OverallSummary == "" {
+		t.Fatal("results.scoring: expected non-empty overallSummary")
+	}
+	if len(resultsResp.Scoring.Scores) == 0 {
+		t.Fatal("results.scoring: expected non-empty scores map")
+	}
+	t.Log("Golden path test passed: full flow through /next and results.")
 }
 
 // Helper function to create a bool pointer

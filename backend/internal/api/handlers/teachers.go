@@ -73,7 +73,7 @@ func (h *TeacherHandler) RegisterTeacher(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "email address is already registered", http.StatusConflict)
 		return
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		// Unexpected database error
 		http.Error(w, "failed to check email availability", http.StatusInternalServerError)
 		return
