@@ -12,14 +12,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
 )
 
 type InterviewHandler struct {
-	q *db.Queries
+	q     *db.Queries
+	eng   *engine.Engine
 }
 
-func NewInterviewHandler(q *db.Queries) *InterviewHandler {
-	return &InterviewHandler{q: q}
+func NewInterviewHandler(q *db.Queries, eng *engine.Engine) *InterviewHandler {
+	return &InterviewHandler{q: q, eng: eng}
 }
 
 type CreateInterviewRequest struct {
@@ -471,5 +473,118 @@ func (h *InterviewHandler) ListMessages(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// NextResponse is the JSON shape for GET/POST /interviews/{id}/next.
+type NextResponse struct {
+	Status               string     `json:"status"`
+	NextQuestionID       *uuid.UUID `json:"nextQuestionId,omitempty"`
+	Prompt               string     `json:"prompt,omitempty"`
+	PromptOverride       string     `json:"promptOverride,omitempty"`
+	WaitingForQuestionID *uuid.UUID `json:"waitingForQuestionId,omitempty"`
+	ClassifiedCategory   string     `json:"classifiedCategory,omitempty"`
+}
+
+// GetNext handles GET /interviews/{id}/next — idempotent "current next" step.
+func (h *InterviewHandler) GetNext(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		http.Error(w, "interview ID is required", http.StatusBadRequest)
+		return
+	}
+	interviewID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid interview ID format", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	result, err := h.eng.ComputeNext(ctx, interviewID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "interview not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to compute next: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := nextResultToResponse(result)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// PostNext handles POST /interviews/{id}/next — advance: compute next, and if next is a question, create AI message; if done, mark interview completed.
+func (h *InterviewHandler) PostNext(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		http.Error(w, "interview ID is required", http.StatusBadRequest)
+		return
+	}
+	interviewID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid interview ID format", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	result, err := h.eng.ComputeNext(ctx, interviewID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "interview not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to compute next: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if result.Status == engine.NextStatusNextQuestion && result.NextQuestionID != nil {
+		interviewIDPg := pgtype.UUID{Bytes: interviewID, Valid: true}
+		questionIDPg := pgtype.UUID{Bytes: *result.NextQuestionID, Valid: true}
+		content := result.Prompt
+		if result.PromptOverride != "" {
+			content = result.PromptOverride
+		}
+		_, err = h.q.CreateInterviewMessage(ctx, db.CreateInterviewMessageParams{
+			InterviewID:         interviewIDPg,
+			Sender:             "ai",
+			InterviewQuestionID: questionIDPg,
+			Content:            content,
+		})
+		if err != nil {
+			http.Error(w, "failed to create AI message: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if result.Status == engine.NextStatusDone {
+		interviewIDPg := pgtype.UUID{Bytes: interviewID, Valid: true}
+		err = h.q.UpdateInterviewStatus(ctx, db.UpdateInterviewStatusParams{
+			InterviewID: interviewIDPg,
+			Status:      "completed",
+		})
+		if err != nil {
+			http.Error(w, "failed to complete interview: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	resp := nextResultToResponse(result)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func nextResultToResponse(r *engine.NextResult) NextResponse {
+	resp := NextResponse{
+		Status:               string(r.Status),
+		NextQuestionID:       r.NextQuestionID,
+		Prompt:               r.Prompt,
+		PromptOverride:       r.PromptOverride,
+		WaitingForQuestionID: r.WaitingForQuestionID,
+		ClassifiedCategory:   r.ClassifiedCategory,
+	}
+	return resp
 }
 

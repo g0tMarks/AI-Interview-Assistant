@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/services"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/validation"
 )
@@ -147,7 +148,8 @@ func TestCreateRubricTemplateInterviewFlow(t *testing.T) {
 	llmService := services.NewOpenAIService()
 	rubricHandler := NewRubricHandler(queries, nil, nil)
 	templateHandler := NewInterviewTemplateHandler(queries, llmService)
-	interviewHandler := NewInterviewHandler(queries)
+	interviewEngine := engine.NewEngine(queries, llmService)
+	interviewHandler := NewInterviewHandler(queries, interviewEngine)
 
 	// Task 2: Create Rubric
 	t.Log("Task 2: Creating rubric...")

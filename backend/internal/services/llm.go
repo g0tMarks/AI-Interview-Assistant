@@ -15,17 +15,28 @@ import (
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/rubricparser"
 )
 
-// LLMService provides an interface for generating interview instructions and parsing rubrics.
+// ResponseCategory is the classification of a student's answer for branching.
+const (
+	ResponseCategoryStrong        = "strong"
+	ResponseCategoryPartial      = "partial"
+	ResponseCategoryIncorrect    = "incorrect"
+	ResponseCategoryMisconception = "misconception"
+	ResponseCategoryDontKnow     = "dont_know"
+)
+
+// LLMService provides an interface for generating interview instructions, parsing rubrics, and classifying responses.
 type LLMService interface {
 	GenerateInterviewInstructions(ctx context.Context, rubricTitle string, rubricRawText string) (string, error)
 	ParseRubric(ctx context.Context, rubricTitle string, rawText string) (*rubricparser.ParseRubricOutput, error)
+	// ClassifyResponse returns the response category for branching (strong, partial, incorrect, misconception, dont_know).
+	ClassifyResponse(ctx context.Context, questionPrompt string, userResponse string) (string, error)
 }
 
 // OpenAIService implements LLMService using OpenAI API (or Anthropic as fallback)
 type OpenAIService struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
+	apiKey       string
+	baseURL      string
+	client       *http.Client
 	useAnthropic bool
 }
 
@@ -33,10 +44,10 @@ type OpenAIService struct {
 func NewOpenAIService() *OpenAIService {
 	openAIKey := os.Getenv("OPENAI_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
-	
+
 	var apiKey string
 	var useAnthropic bool
-	
+
 	if openAIKey != "" {
 		apiKey = openAIKey
 		useAnthropic = false
@@ -51,8 +62,8 @@ func NewOpenAIService() *OpenAIService {
 	}
 
 	return &OpenAIService{
-		apiKey:  apiKey,
-		baseURL: baseURL,
+		apiKey:       apiKey,
+		baseURL:      baseURL,
 		useAnthropic: useAnthropic,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
@@ -162,7 +173,7 @@ func (s *OpenAIService) callAnthropicAPI(ctx context.Context, prompt string) (st
 		anthropicModel = "claude-sonnet-4-6"
 	}
 	requestBody := map[string]interface{}{
-		"model": anthropicModel,
+		"model":      anthropicModel,
 		"max_tokens": 2000,
 		"messages": []map[string]string{
 			{
@@ -273,6 +284,51 @@ Rules:
 		return nil, fmt.Errorf("LLM returned invalid JSON: %w", err)
 	}
 	return &out, nil
+}
+
+// ClassifyResponse classifies a student's response for interview branching.
+func (s *OpenAIService) ClassifyResponse(ctx context.Context, questionPrompt string, userResponse string) (string, error) {
+	if s.apiKey == "" {
+		return "", fmt.Errorf("LLM API key not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+	}
+	userResponse = strings.TrimSpace(userResponse)
+	if userResponse == "" {
+		return ResponseCategoryDontKnow, nil
+	}
+
+	prompt := fmt.Sprintf(`Classify the student's response to this interview question. Return exactly one word: strong, partial, incorrect, misconception, or dont_know.
+
+Question: %s
+
+Student response: %s
+
+Definitions:
+- strong: confident, correct, complete answer
+- partial: partly correct or incomplete
+- incorrect: wrong or off-topic
+- misconception: reveals a specific misunderstanding (wrong belief)
+- dont_know: no real answer, refusal, or irrelevant
+
+Reply with only the single classification word, nothing else.`, questionPrompt, userResponse)
+
+	var raw string
+	var err error
+	if s.useAnthropic {
+		raw, err = s.callAnthropicAPI(ctx, prompt)
+	} else {
+		raw, err = s.callOpenAIAPI(ctx, prompt)
+	}
+	if err != nil {
+		return "", fmt.Errorf("LLM classify: %w", err)
+	}
+
+	cat := strings.ToLower(strings.TrimSpace(raw))
+	switch cat {
+	case ResponseCategoryStrong, ResponseCategoryPartial, ResponseCategoryIncorrect, ResponseCategoryMisconception, ResponseCategoryDontKnow:
+		return cat, nil
+	}
+	// Fallback if model returns something else
+	return ResponseCategoryPartial, nil
 }
 
 // extractJSON finds JSON in the response, stripping optional markdown code fences.

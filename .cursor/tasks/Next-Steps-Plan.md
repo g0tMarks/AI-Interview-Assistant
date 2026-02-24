@@ -52,7 +52,7 @@ Do these in sequence so each step has the right foundation.
 | **6** | **Rubric parser (LLM one-shot) + validation + store** | ✅ **Done** — Use an LLM to parse raw text in one shot → (1) criteria JSON + (2) initial question plan. Validate JSON shape. Store criteria + plan. Teacher can edit criteria/plan (Step #7). |
 | **7** | **Rubric version editing endpoint** | ✅ **Done** — PATCH /rubrics/{id} and PUT /rubrics/{id}/criteria-and-plan. Teacher can fix parser mistakes and edit criteria/plan. UpdateRubric in SQLC; shared store logic for criteria+plan. |
 | **8** | **Interview_messages table + endpoints** | ✅ **Done** — POST /interviews/{id}/messages, GET /interviews/{id}/messages. Request: sender (ai/user), content, optional interviewQuestionId. Used by engine and frontend. |
-| **9** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); use LLM API for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
+| **9** | **Interview engine v1 + /interviews/{id}/next** | ✅ **Done** — Engine uses plan + branches + messages; LLM classifies user response; GET (idempotent) and POST (advance + persist AI message / complete) /interviews/{id}/next. |
 | **10** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
 | **11** | **Golden-path integration test** | Single test: create teacher → (optional class/student) → rubric → template → interview → call /next until done → trigger evaluation → GET results; assert status, summary, and scoring shape. |
 | **12** | **Rate limits + prompt injection hardening** | Global or per-route rate limits; sanitize/validate user content before sending to LLM and in storage. |
@@ -207,6 +207,7 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 | Rubric parser | `backend/internal/rubricparser/`, `handlers/rubrics.go` (ParseRubric), `services/llm.go` (ParseRubric), `api_test/test-rubric-parse.sh` |
 | Rubric edit | `handlers/rubrics.go` (PatchRubric, PutCriteriaAndPlan, storeCriteriaAndPlan), `db/queries/rubrics.sql` (UpdateRubric) |
 | Interview messages | `handlers/interviews.go` (CreateMessage, ListMessages), `db/interview_messages.sql_gen.go` |
+| Interview engine + /next | `internal/engine/engine.go` (ComputeNext), `handlers/interviews.go` (GetNext, PostNext), `services/llm.go` (ClassifyResponse) |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.
