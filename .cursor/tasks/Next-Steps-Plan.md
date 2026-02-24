@@ -16,7 +16,7 @@
 | **Teachers** | POST /teachers/register (no login/JWT) |
 | **Interview templates** | POST /interview-templates (LLM-generated instructions from rubric) |
 | **Interviews** | POST /interviews, GET /interviews/{id} (supports `student_id` linked to `app.students`; `student_name` remains optional display override) |
-| **interview_messages** | **Table + SQLC** (`CreateInterviewMessage`, `ListMessagesByInterview`) — **no HTTP endpoints** |
+| **interview_messages** | Table + SQLC + **HTTP endpoints**: POST /interviews/{id}/messages, GET /interviews/{id}/messages (used by engine and frontend). |
 | **Summaries / criterion_evidence** | **Tables + SQLC** (Create/Get/Update summary, criterion_evidence) — **no HTTP endpoints** |
 | **Integration test** | Teacher → rubric → template → interview → 2 messages via DB → GET interview; **does not** drive /next, engine, or results API |
 | **Students / classes / roster** | CRUD handlers and routes (POST/GET/PATCH students, classes, roster) |
@@ -27,8 +27,6 @@
 | **Rubric parser** (LLM one-shot + validation + store) | POST /rubrics/{id}/parse: LLM parses `raw_text` → criteria JSON + question plan; validated; stored in `rubric_criteria`, `interview_plans`, `interview_questions`. Re-parsing replaces existing. |
 
 ### Not present (from your list)
-- **Rubric version editing** (teacher corrects criteria/plan) — no UpdateRubric / PATCH rubric
-- **Interview messages HTTP API** (POST/GET messages for an interview)
 - **Interview engine v1** and **GET/POST /interviews/{id}/next**
 - **Final evaluation + results endpoint** and stored scoring JSON API
 - **Golden-path integration test** covering full flow (through /next and results)
@@ -53,7 +51,7 @@ Do these in sequence so each step has the right foundation.
 | **5** | **Text extraction for PDF/DOCX → raw text** | ✅ **Done** — Use uploads + storage; extract text; store in `rubrics.raw_text` and return in API. PDF: ledongthuc/pdf; DOCX: mydocx (no commercial license). |
 | **6** | **Rubric parser (LLM one-shot) + validation + store** | ✅ **Done** — Use an LLM to parse raw text in one shot → (1) criteria JSON + (2) initial question plan. Validate JSON shape. Store criteria + plan. Teacher can edit criteria/plan (Step #7). |
 | **7** | **Rubric version editing endpoint** | ✅ **Done** — PATCH /rubrics/{id} and PUT /rubrics/{id}/criteria-and-plan. Teacher can fix parser mistakes and edit criteria/plan. UpdateRubric in SQLC; shared store logic for criteria+plan. |
-| **8** | **Interview_messages table + endpoints** | Table and SQLC exist. Add: POST /interviews/{id}/messages, GET /interviews/{id}/messages. Used by engine and frontend. |
+| **8** | **Interview_messages table + endpoints** | ✅ **Done** — POST /interviews/{id}/messages, GET /interviews/{id}/messages. Request: sender (ai/user), content, optional interviewQuestionId. Used by engine and frontend. |
 | **9** | **Interview engine v1 + /interviews/{id}/next** | Implement “next question / next step” logic (from plan + branches + messages); use LLM API for classification. Expose as POST /interviews/{id}/next (and/or GET for idempotent “current next”). |
 | **10** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
 | **11** | **Golden-path integration test** | Single test: create teacher → (optional class/student) → rubric → template → interview → call /next until done → trigger evaluation → GET results; assert status, summary, and scoring shape. |
@@ -179,6 +177,19 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 
 **Usage:** PATCH to update title/description/rawText. PUT criteria-and-plan after editing the parsed criteria/question plan in the UI (e.g. fix parser mistakes).
 
+**Step #8 – Interview_messages table + endpoints** — ✅ **Done**
+
+**Completed**: 2026-02-24
+
+1. **Handlers** (`backend/internal/api/handlers/interviews.go`):
+   - `CreateMessage`: POST body `{ "sender": "ai"|"user", "content": "...", "interviewQuestionId?": "uuid" }`. Validates interview exists, sender enum, non-empty content. Returns 201 with full message (interviewMessageId, interviewId, sender, interviewQuestionId?, content, createdAt).
+   - `ListMessages`: GET returns all messages for the interview ordered by createdAt ASC; 404 if interview not found.
+2. **Types**: `CreateInterviewMessageRequest`, `InterviewMessageResponse` (camelCase JSON).
+3. **Routes** (`router.go`): `POST /interviews/{id}/messages`, `GET /interviews/{id}/messages`.
+4. **SQLC**: Uses existing `CreateInterviewMessage`, `ListMessagesByInterview`; interview existence checked via `GetInterviewByID` before create/list.
+
+**Usage:** Engine or frontend POST messages when user/AI speaks; GET messages to load or sync conversation for an interview.
+
 ---
 
 ## 5. File Reference
@@ -195,6 +206,7 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 | Text extraction | `backend/internal/extraction/extraction.go`, `backend/internal/api/handlers/rubrics.go` (UploadRubricFile), `backend/api_test/test-rubric-upload.sh` |
 | Rubric parser | `backend/internal/rubricparser/`, `handlers/rubrics.go` (ParseRubric), `services/llm.go` (ParseRubric), `api_test/test-rubric-parse.sh` |
 | Rubric edit | `handlers/rubrics.go` (PatchRubric, PutCriteriaAndPlan, storeCriteriaAndPlan), `db/queries/rubrics.sql` (UpdateRubric) |
+| Interview messages | `handlers/interviews.go` (CreateMessage, ListMessages), `db/interview_messages.sql_gen.go` |
 | Integration test | `backend/internal/api/handlers/integration_test.go` |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

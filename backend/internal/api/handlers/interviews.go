@@ -44,6 +44,21 @@ type InterviewResponse struct {
 	CompletedAt     *pgtype.Timestamptz `json:"completedAt"`
 }
 
+type CreateInterviewMessageRequest struct {
+	Sender              string     `json:"sender"`
+	InterviewQuestionID *uuid.UUID `json:"interviewQuestionId,omitempty"`
+	Content             string     `json:"content"`
+}
+
+type InterviewMessageResponse struct {
+	InterviewMessageID  uuid.UUID          `json:"interviewMessageId"`
+	InterviewID         uuid.UUID          `json:"interviewId"`
+	Sender              string             `json:"sender"`
+	InterviewQuestionID *uuid.UUID         `json:"interviewQuestionId,omitempty"`
+	Content             string             `json:"content"`
+	CreatedAt           pgtype.Timestamptz `json:"createdAt"`
+}
+
 func (h *InterviewHandler) CreateInterview(w http.ResponseWriter, r *http.Request) {
 	var req CreateInterviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -282,6 +297,175 @@ func (h *InterviewHandler) GetInterview(w http.ResponseWriter, r *http.Request) 
 		Status:          interview.Status,
 		StartedAt:       interview.StartedAt,
 		CompletedAt:     completedAtResp,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// CreateMessage handles POST /interviews/{id}/messages
+func (h *InterviewHandler) CreateMessage(w http.ResponseWriter, r *http.Request) {
+	// Extract interview id from path parameter
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		http.Error(w, "interview ID is required", http.StatusBadRequest)
+		return
+	}
+
+	interviewID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid interview ID format", http.StatusBadRequest)
+		return
+	}
+
+	var req CreateInterviewMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	req.Sender = strings.TrimSpace(req.Sender)
+	if req.Sender != "ai" && req.Sender != "user" {
+		http.Error(w, "sender must be either 'ai' or 'user'", http.StatusBadRequest)
+		return
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify interview exists
+	interviewIDPg := pgtype.UUID{
+		Bytes: interviewID,
+		Valid: true,
+	}
+	_, err = h.q.GetInterviewByID(ctx, interviewIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "interview not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to verify interview", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert optional interviewQuestionId
+	questionIDPg := pgtype.UUID{}
+	if req.InterviewQuestionID != nil {
+		questionIDPg.Bytes = *req.InterviewQuestionID
+		questionIDPg.Valid = true
+	}
+
+	msg, err := h.q.CreateInterviewMessage(ctx, db.CreateInterviewMessageParams{
+		InterviewID:         interviewIDPg,
+		Sender:              req.Sender,
+		InterviewQuestionID: questionIDPg,
+		Content:             req.Content,
+	})
+	if err != nil {
+		http.Error(w, "failed to create message: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var messageID uuid.UUID
+	if msg.InterviewMessageID.Valid {
+		messageID = msg.InterviewMessageID.Bytes
+	}
+
+	var interviewIDResp uuid.UUID
+	if msg.InterviewID.Valid {
+		interviewIDResp = msg.InterviewID.Bytes
+	}
+
+	var questionIDResp *uuid.UUID
+	if msg.InterviewQuestionID.Valid {
+		id := uuid.UUID(msg.InterviewQuestionID.Bytes)
+		questionIDResp = &id
+	}
+
+	resp := InterviewMessageResponse{
+		InterviewMessageID:  messageID,
+		InterviewID:         interviewIDResp,
+		Sender:              msg.Sender,
+		InterviewQuestionID: questionIDResp,
+		Content:             msg.Content,
+		CreatedAt:           msg.CreatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ListMessages handles GET /interviews/{id}/messages
+func (h *InterviewHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
+	// Extract interview id from path parameter
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		http.Error(w, "interview ID is required", http.StatusBadRequest)
+		return
+	}
+
+	interviewID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid interview ID format", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	interviewIDPg := pgtype.UUID{
+		Bytes: interviewID,
+		Valid: true,
+	}
+
+	// Verify interview exists
+	_, err = h.q.GetInterviewByID(ctx, interviewIDPg)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "interview not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to verify interview", http.StatusInternalServerError)
+		return
+	}
+
+	msgs, err := h.q.ListMessagesByInterview(ctx, interviewIDPg)
+	if err != nil {
+		http.Error(w, "failed to list messages: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]InterviewMessageResponse, len(msgs))
+	for i, msg := range msgs {
+		var messageID uuid.UUID
+		if msg.InterviewMessageID.Valid {
+			messageID = msg.InterviewMessageID.Bytes
+		}
+
+		var interviewIDResp uuid.UUID
+		if msg.InterviewID.Valid {
+			interviewIDResp = msg.InterviewID.Bytes
+		}
+
+		var questionIDResp *uuid.UUID
+		if msg.InterviewQuestionID.Valid {
+			id := uuid.UUID(msg.InterviewQuestionID.Bytes)
+			questionIDResp = &id
+		}
+
+		resp[i] = InterviewMessageResponse{
+			InterviewMessageID:  messageID,
+			InterviewID:         interviewIDResp,
+			Sender:              msg.Sender,
+			InterviewQuestionID: questionIDResp,
+			Content:             msg.Content,
+			CreatedAt:           msg.CreatedAt,
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -39,6 +39,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Post("/interview-templates", templateHandler.CreateInterviewTemplate)
 	r.Post("/interviews", interviewHandler.CreateInterview)
 	r.Get("/interviews/{id}", interviewHandler.GetInterview)
+	r.Post("/interviews/{id}/messages", interviewHandler.CreateMessage)
+	r.Get("/interviews/{id}/messages", interviewHandler.ListMessages)
 	r.Post("/uploads", uploadHandler.Upload)
 	r.Get("/uploads/{key}", uploadHandler.Download)
 
