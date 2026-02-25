@@ -3,21 +3,25 @@ package api
 
 import (
 	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api/handlers"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/api/middleware"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/evaluation"
-	"github.com/go-chi/chi/v5"
 )
 
 // NewRouter builds the chi router and registers all routes.
 func NewRouter(deps Dependencies) http.Handler {
 	r := chi.NewRouter()
 
-	// Middlewares (logging, recover, etc.) can go here later.
+	// Global middlewares.
 	// r.Use(middleware.Logger)
 	// r.Use(middleware.Recoverer)
+	// Basic IP-based rate limit to protect the API and LLM-backed endpoints.
+	r.Use(middleware.RateLimitIP(100, time.Minute))
 
 	healthHandler := handlers.NewHealthHandler()
 	rubricHandler := handlers.NewRubricHandler(deps.Queries, deps.LLMService, deps.TxBeginner)
@@ -40,6 +44,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Post("/rubrics/{id}/parse", rubricHandler.ParseRubric)
 	r.Put("/rubrics/{id}/criteria-and-plan", rubricHandler.PutCriteriaAndPlan)
 	r.Post("/teachers/register", teacherHandler.RegisterTeacher)
+	r.Get("/teachers/{id}/results", teacherHandler.ListResults)
 	r.Post("/interview-templates", templateHandler.CreateInterviewTemplate)
 	r.Post("/interviews", interviewHandler.CreateInterview)
 	r.Get("/interviews/{id}", interviewHandler.GetInterview)
@@ -73,6 +78,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Get("/classes/{id}", classHandler.GetClass)
 	r.Patch("/classes/{id}", classHandler.UpdateClass)
 	r.Delete("/classes/{id}", classHandler.DeleteClass)
+	r.Post("/classes/{id}/interviews/bulk", classHandler.BulkCreateInterviews)
 
 	// Roster (students in a class)
 	r.Get("/classes/{classId}/roster", rosterHandler.ListRoster)

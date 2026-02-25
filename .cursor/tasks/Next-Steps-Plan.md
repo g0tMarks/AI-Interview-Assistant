@@ -1,6 +1,6 @@
 # Next Steps Plan – Interview Assistant
 
-**Generated**: 2025-02-15  
+**Generated**: 2025-02-15 · **Updated**: 2026-02-24  
 **Purpose**: Align roadmap with codebase state and your ordered list. Use this to decide what to do next and in what order.
 
 ---
@@ -17,8 +17,10 @@
 | **Interview templates** | POST /interview-templates (LLM-generated instructions from rubric) |
 | **Interviews** | POST /interviews, GET /interviews/{id} (supports `student_id` linked to `app.students`; `student_name` remains optional display override) |
 | **interview_messages** | Table + SQLC + **HTTP endpoints**: POST /interviews/{id}/messages, GET /interviews/{id}/messages (used by engine and frontend). |
-| **Summaries / criterion_evidence** | **Tables + SQLC** (Create/Get/Update summary, criterion_evidence) — **no HTTP endpoints** |
-| **Integration test** | Teacher → rubric → template → interview → 2 messages via DB → GET interview; **does not** drive /next, engine, or results API |
+| **Summaries / criterion_evidence** | Tables + SQLC + **HTTP**: GET /interviews/{id}/results (runs LLM evaluation if needed), GET /interviews/{id}/summary. Scoring JSON stored in `raw_llm_output`. |
+| **Interview engine + /next** | GET/POST /interviews/{id}/next; engine classifies response, advances or completes interview. |
+| **Evaluation + results** | LLM evaluates completed interviews → fills summaries + criterion_evidence; GET /interviews/{id}/results returns summary, criterionEvidence, scoring. |
+| **Integration tests** | TestCreateRubricTemplateInterviewFlow (rubric → template → interview → messages → GET); TestGoldenPathFullFlow (full flow through /next and GET results). |
 | **Students / classes / roster** | CRUD handlers and routes (POST/GET/PATCH students, classes, roster) |
 | **Student auth + JWT** | POST /auth/student/login (class code + email → JWT); RequireStudentAuth middleware; GET /student/me (protected) |
 | **Uploads (local storage)** | POST /uploads (multipart file); GET /uploads/{key} (download). Local disk store under `UPLOADS_DIR`. |
@@ -27,9 +29,6 @@
 | **Rubric parser** (LLM one-shot + validation + store) | POST /rubrics/{id}/parse: LLM parses `raw_text` → criteria JSON + question plan; validated; stored in `rubric_criteria`, `interview_plans`, `interview_questions`. Re-parsing replaces existing. |
 
 ### Not present (from your list)
-- **Interview engine v1** and **GET/POST /interviews/{id}/next**
-- **Final evaluation + results endpoint** and stored scoring JSON API
-- **Golden-path integration test** covering full flow (through /next and results)
 - **Rate limits** or **prompt injection hardening**
 - **Bulk interview creation** for a class
 - **Results listing/export** for teacher
@@ -53,17 +52,19 @@ Do these in sequence so each step has the right foundation.
 | **7** | **Rubric version editing endpoint** | ✅ **Done** — PATCH /rubrics/{id} and PUT /rubrics/{id}/criteria-and-plan. Teacher can fix parser mistakes and edit criteria/plan. UpdateRubric in SQLC; shared store logic for criteria+plan. |
 | **8** | **Interview_messages table + endpoints** | ✅ **Done** — POST /interviews/{id}/messages, GET /interviews/{id}/messages. Request: sender (ai/user), content, optional interviewQuestionId. Used by engine and frontend. |
 | **9** | **Interview engine v1 + /interviews/{id}/next** | ✅ **Done** — Engine uses plan + branches + messages; LLM classifies user response; GET (idempotent) and POST (advance + persist AI message / complete) /interviews/{id}/next. |
-| **10** | **Final evaluation + results endpoint + stored scoring JSON** | After interview completion, run evaluation (LLM or rules) → fill `interview_summaries` + `criterion_evidence`; store scoring JSON (e.g. in summary or dedicated column). Add GET /interviews/{id}/results (and optionally GET /interviews/{id}/summary). |
-| **11** | **Golden-path integration test** | Single test: create teacher → (optional class/student) → rubric → template → interview → call /next until done → trigger evaluation → GET results; assert status, summary, and scoring shape. |
-| **12** | **Rate limits + prompt injection hardening** | Global or per-route rate limits; sanitize/validate user content before sending to LLM and in storage. |
-| **13** | **Bulk interview creation for a class** | Endpoint (e.g. POST /classes/{id}/interviews/bulk) using plan + roster to create N interviews (one per student or selected list). Depends on classes/roster. |
-| **14** | **Results listing/export for teacher** | List results by teacher/class/interview plan; export (CSV/JSON). Depends on results endpoint and optionally on classes. |
+| **10** | **Final evaluation + results endpoint + stored scoring JSON** | ✅ **Done** — GET /interviews/{id}/results runs LLM evaluation if needed, fills `interview_summaries` + `criterion_evidence`, stores scoring JSON in `raw_llm_output`; GET /interviews/{id}/summary returns summary only. |
+| **11** | **Golden-path integration test** | ✅ **Done** — TestGoldenPathFullFlow: teacher → rubric → template → criterion + question + branch → interview → POST /next until done → GET results; asserts status, summary, criterionEvidence, scoring. |
+| **12** | **Rate limits + prompt injection hardening** | ✅ **Done** — Global IP-based rate limits on the API plus sanitizing/validating user content before saving and before sending to the LLM. |
+| **13** | **Bulk interview creation for a class** | ✅ **Done** — POST /classes/{id}/interviews/bulk uses a plan plus either the full roster or a provided list of studentIds to create one interview per student. |
+| **14** | **Results listing/export for teacher** | ✅ **Done** — GET /teachers/{id}/results lists completed interview results for a teacher and interview plan, with optional class filter and JSON or CSV export. |
 | **15** | **Voice (push-to-talk) + STT** | Push-to-talk UI; send audio to STT; feed transcript into interview (e.g. as user messages). Backend: STT integration and possibly WebSocket or chunked HTTP. |
 | **16** | **Microsoft Entra OIDC SSO** | Replace or complement teacher (and optionally student) auth with Entra OIDC; map identity to teachers (and students if applicable). |
 
 ---
 
 ## 3. What to Do Next (Concrete)
+
+**Next up:** Step **#15** (voice / push-to-talk + STT), then #16 (Microsoft Entra OIDC SSO).
 
 **Step #1 – Students / classes / roster + SQLC + CRUD** — ✅ **Done**
 
@@ -190,6 +191,23 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 
 **Usage:** Engine or frontend POST messages when user/AI speaks; GET messages to load or sync conversation for an interview.
 
+**Step #10 – Final evaluation + results endpoint + stored scoring JSON** — ✅ **Done**
+
+**Completed**: 2026-02-24
+
+1. **LLM evaluation** (`backend/internal/services/llm.go`): `EvaluateInterview(ctx, rubricTitle, criteria []evaluation.CriterionForEval, transcript)` — calls LLM to produce overall summary, strengths, areas for growth, suggested next steps, and per-criterion level, evidence text, and confidence. Returns `evaluation.EvalOutput`.
+2. **Evaluation package** (`backend/internal/evaluation/`): `Runner.Run(ctx, interviewID)` loads interview (must be completed), plan, rubric criteria, messages; builds transcript; calls LLM; creates `interview_summaries` row and `criterion_evidence` rows; stores full scoring JSON in `raw_llm_output`. Idempotent if summary already exists.
+3. **Endpoints**: `GET /interviews/{id}/results` — if interview not completed returns 400; if completed but no summary, runs evaluation then returns summary + criterionEvidence + scoring. `GET /interviews/{id}/summary` — returns summary only (no criterion evidence).
+4. **Response shape**: Results include `interviewId`, `status`, `overallSummary`, `strengths`, `areasForGrowth`, `suggestedNextSteps`, `criterionEvidence[]`, `scoring` (parsed from `raw_llm_output`: scores map, criteria array).
+
+**Step #11 – Golden-path integration test** — ✅ **Done**
+
+**Completed**: 2026-02-24
+
+1. **Test** (`backend/internal/api/handlers/integration_test.go`): `TestGoldenPathFullFlow` — creates teacher, rubric, template; inserts one rubric criterion, one interview question, one branch (strong → terminate); creates interview; POST /next (first question); POST /interviews/{id}/messages (user reply); POST /next (done); GET /interviews/{id}/results. Asserts interview status completed, results have non-empty overallSummary, criterionEvidence, and scoring.
+2. **Mock LLM** (`mockLLMForGoldenPath`) implements `LLMService`: `ClassifyResponse` returns "strong"; `EvaluateInterview` returns fixed summary and one criterion. No API key required for test.
+3. **Note**: Integration tests require a test DB with schema including `student_id` on `app.interviews` (run migrations if tests fail with "column student_id does not exist").
+
 ---
 
 ## 5. File Reference
@@ -208,6 +226,7 @@ After that, proceed in order: **#4** (bulk student roster upload), then **#5** (
 | Rubric edit | `handlers/rubrics.go` (PatchRubric, PutCriteriaAndPlan, storeCriteriaAndPlan), `db/queries/rubrics.sql` (UpdateRubric) |
 | Interview messages | `handlers/interviews.go` (CreateMessage, ListMessages), `db/interview_messages.sql_gen.go` |
 | Interview engine + /next | `internal/engine/engine.go` (ComputeNext), `handlers/interviews.go` (GetNext, PostNext), `services/llm.go` (ClassifyResponse) |
-| Integration test | `backend/internal/api/handlers/integration_test.go` |
+| Evaluation + results | `internal/evaluation/` (Runner.Run, types), `services/llm.go` (EvaluateInterview), `handlers/interviews.go` (GetResults, GetSummary) |
+| Integration test | `backend/internal/api/handlers/integration_test.go` (TestCreateRubricTemplateInterviewFlow, TestGoldenPathFullFlow) |
 
 Use this plan as the single checklist; update the “Current state” section as you complete each item.

@@ -14,6 +14,7 @@ import (
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/db"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/engine"
 	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/evaluation"
+	"github.com/g0tMarks/AI-Interview-Assistant/backend/internal/safety"
 )
 
 type InterviewHandler struct {
@@ -339,6 +340,13 @@ func (h *InterviewHandler) CreateMessage(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "content is required", http.StatusBadRequest)
 		return
 	}
+	// Sanitize and bound user-supplied content before storing or using it later in LLM prompts.
+	sanitized, err := safety.SanitizeUserMessage(req.Content)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.Content = sanitized
 
 	ctx := r.Context()
 
