@@ -497,6 +497,29 @@ func (m *mockLLMForGoldenPath) EvaluateInterview(ctx context.Context, rubricTitl
 	}, nil
 }
 
+func (m *mockLLMForGoldenPath) GenerateAuthorshipReport(ctx context.Context, opts services.GenerateAuthorshipReportOpts) (*services.AuthorshipReportPayload, error) {
+	return &services.AuthorshipReportPayload{
+		OverallAssessment: services.OverallAssessment{
+			Level:      "confident",
+			Confidence: 0.85,
+			Summary:    "Submission and viva are consistent with student authorship.",
+		},
+		EvidenceSignals: []services.EvidenceSignal{
+			{Signal: "Consistency", Strength: "strong", Explanation: "Viva answers aligned with submission.", SupportingQuotesOrRefs: nil},
+		},
+		RiskFlags:         nil,
+		RecommendedFollowups: []services.RecommendedFollowup{
+			{Question: "Can you expand on section X?", Why: "To verify depth of understanding."},
+		},
+		RubricAlignment: map[string]string{"Understanding": "Addressed in viva."},
+		Provenance: services.Provenance{
+			SubmissionArtifactIDs: opts.ArtifactIDs,
+			InterviewID:           opts.InterviewID,
+			ReportGeneratedAt:     "2025-01-01T00:00:00Z",
+		},
+	}, nil
+}
+
 // TestGoldenPathFullFlow runs: teacher → rubric → template → add criterion + question + branch → interview → POST /next until done → GET results.
 func TestGoldenPathFullFlow(t *testing.T) {
 	conn, queries := setupTestDB(t)
@@ -723,6 +746,167 @@ func TestGoldenPathFullFlow(t *testing.T) {
 		t.Fatal("results.scoring: expected non-empty scores map")
 	}
 	t.Log("Golden path test passed: full flow through /next and results.")
+}
+
+// TestAuthorshipFlow runs: create rubric → template → student → submission → artifacts → start viva → add messages → run authorship → get report.
+func TestAuthorshipFlow(t *testing.T) {
+	conn, queries := setupTestDB(t)
+	defer teardownTestDB(t, conn)
+
+	ctx := context.Background()
+	teacherID := createTestTeacher(t, queries, ctx)
+	defer cleanupTestData(t, queries, ctx, teacherID)
+
+	mockLLM := &mockLLMForGoldenPath{}
+	rubricHandler := NewRubricHandler(queries, nil, nil)
+	templateHandler := NewInterviewTemplateHandler(queries, mockLLM)
+	interviewEngine := engine.NewEngine(queries, mockLLM)
+	evalRunner := evaluation.NewRunner(queries, mockLLM)
+	interviewHandler := NewInterviewHandler(queries, interviewEngine, evalRunner)
+	submissionHandler := NewSubmissionHandler(queries, mockLLM, interviewHandler)
+
+	// Create rubric
+	createRubricReq := CreateRubricRequest{
+		TeacherID:   teacherID,
+		Title:       "Authorship Test Rubric",
+		Description: "For authorship flow",
+		RawText:     "Student demonstrates original work.",
+	}
+	reqBody, _ := json.Marshal(createRubricReq)
+	req := httptest.NewRequest("POST", "/rubrics", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	rubricHandler.CreateRubric(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create rubric: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var rubricResp RubricResponse
+	if err := json.NewDecoder(w.Body).Decode(&rubricResp); err != nil {
+		t.Fatalf("decode rubric: %v", err)
+	}
+	rubricID := rubricResp.RubricID
+
+	// Create template so submission can start viva
+	createTemplateReq := CreateInterviewTemplateRequest{
+		RubricID:            rubricID,
+		Title:               "Authorship Viva Plan",
+		Instructions:        "Ask about the submission.",
+		Config:              json.RawMessage(`{}`),
+		Status:              "in_progress",
+		CurriculumSubject:   "",
+		CurriculumLevelBand: "",
+	}
+	reqBody, _ = json.Marshal(createTemplateReq)
+	req = httptest.NewRequest("POST", "/interview-templates", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	templateHandler.CreateInterviewTemplate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create template: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Create student via DB
+	student, err := queries.CreateStudent(ctx, db.CreateStudentParams{
+		Email:        "authorship-student@test.com",
+		DisplayName:  "Authorship Student",
+	})
+	if err != nil {
+		t.Fatalf("create student: %v", err)
+	}
+	studentID := student.StudentID.Bytes
+
+	// Create submission
+	createSubReq := CreateSubmissionRequest{
+		StudentID: studentID,
+		RubricID:  rubricID,
+		Title:     "My submission",
+	}
+	reqBody, _ = json.Marshal(createSubReq)
+	req = httptest.NewRequest("POST", "/submissions", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	submissionHandler.CreateSubmission(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create submission: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var subResp SubmissionResponse
+	if err := json.NewDecoder(w.Body).Decode(&subResp); err != nil {
+		t.Fatalf("decode submission: %v", err)
+	}
+	submissionID := subResp.SubmissionID
+
+	// Add artifact
+	artifactBody := []byte(`{"artifactType":"main_text","payload":{"text":"This is my essay content for the task."}}`)
+	req = httptest.NewRequest("POST", "/submissions/"+submissionID.String()+"/artifacts", bytes.NewReader(artifactBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	submissionHandler.CreateArtifact(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create artifact: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Start viva
+	req = httptest.NewRequest("POST", "/submissions/"+submissionID.String()+"/viva/start", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	submissionHandler.StartViva(w, req)
+	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
+		t.Fatalf("start viva: expected 201 or 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Add viva messages
+	msgBody := []byte(`{"sender":"ai","content":"Can you explain your main argument?"}`)
+	req = httptest.NewRequest("POST", "/submissions/"+submissionID.String()+"/viva/messages", bytes.NewReader(msgBody))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	submissionHandler.VivaMessages(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("viva message 1: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	msgBody = []byte(`{"sender":"user","content":"I argued that the evidence supports my conclusion."}`)
+	req = httptest.NewRequest("POST", "/submissions/"+submissionID.String()+"/viva/messages", bytes.NewReader(msgBody))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	submissionHandler.VivaMessages(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("viva message 2: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Run authorship report
+	req = httptest.NewRequest("POST", "/submissions/"+submissionID.String()+"/authorship/run", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	submissionHandler.RunAuthorship(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("run authorship: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Get authorship report
+	req = httptest.NewRequest("GET", "/submissions/"+submissionID.String()+"/authorship", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	submissionHandler.GetAuthorship(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get authorship: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var reportResp struct {
+		ReportID     uuid.UUID                      `json:"reportId"`
+		SubmissionID uuid.UUID                      `json:"submissionId"`
+		Report       services.AuthorshipReportPayload `json:"report"`
+		CreatedAt    string                         `json:"createdAt"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&reportResp); err != nil {
+		t.Fatalf("decode authorship report: %v", err)
+	}
+	if reportResp.Report.OverallAssessment.Summary == "" {
+		t.Fatal("expected non-empty report overall summary")
+	}
+	if reportResp.Report.OverallAssessment.Level != "confident" {
+		t.Fatalf("expected level confident, got %s", reportResp.Report.OverallAssessment.Level)
+	}
+	t.Log("Authorship flow test passed.")
 }
 
 // Helper function to create a bool pointer

@@ -25,7 +25,7 @@ const (
 	ResponseCategoryDontKnow     = "dont_know"
 )
 
-// LLMService provides an interface for generating interview instructions, parsing rubrics, classifying responses, and evaluating interviews.
+// LLMService provides an interface for generating interview instructions, parsing rubrics, classifying responses, evaluating interviews, and generating authorship reports.
 type LLMService interface {
 	GenerateInterviewInstructions(ctx context.Context, rubricTitle string, rubricRawText string) (string, error)
 	ParseRubric(ctx context.Context, rubricTitle string, rawText string) (*rubricparser.ParseRubricOutput, error)
@@ -33,6 +33,8 @@ type LLMService interface {
 	ClassifyResponse(ctx context.Context, questionPrompt string, userResponse string) (string, error)
 	// EvaluateInterview produces a summary and per-criterion evaluation from a conversation transcript.
 	EvaluateInterview(ctx context.Context, rubricTitle string, criteria []evaluation.CriterionForEval, transcript string) (*evaluation.EvalOutput, error)
+	// GenerateAuthorshipReport produces an authorship report from submission summary and viva transcript.
+	GenerateAuthorshipReport(ctx context.Context, opts GenerateAuthorshipReportOpts) (*AuthorshipReportPayload, error)
 }
 
 // OpenAIService implements LLMService using OpenAI API (or Anthropic as fallback)
@@ -415,6 +417,82 @@ Include one object in "criteria" for each criterion listed above. modelConfidenc
 	if err := json.Unmarshal(jsonBytes, &out); err != nil {
 		return nil, fmt.Errorf("LLM returned invalid JSON: %w", err)
 	}
+	return &out, nil
+}
+
+// GenerateAuthorshipReport produces an authorship report from submission summary and viva transcript.
+func (s *OpenAIService) GenerateAuthorshipReport(ctx context.Context, opts GenerateAuthorshipReportOpts) (*AuthorshipReportPayload, error) {
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("LLM API key not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+	}
+	if strings.TrimSpace(opts.Transcript) == "" {
+		return nil, fmt.Errorf("transcript is empty")
+	}
+
+	prompt := fmt.Sprintf(`You are an expert assessor evaluating student authorship. Based on the student's submitted work and a short viva (interview) transcript, produce an authorship assessment.
+
+Rubric/task: %s
+
+Student submission summary (main text and/or drafts/notes):
+%s
+
+Viva transcript (AI and student messages):
+%s
+
+Respond with a single JSON object only, no other text or markdown. Use exactly this shape:
+{
+  "overall_assessment": {
+    "level": "confident|moderate|low|concern",
+    "confidence": 0.0,
+    "summary": "2-4 sentence summary of authorship confidence and key evidence."
+  },
+  "evidence_signals": [
+    {
+      "signal": "short label",
+      "strength": "strong|moderate|weak",
+      "explanation": "brief explanation",
+      "supporting_quotes_or_refs": ["optional quote or reference"]
+    }
+  ],
+  "risk_flags": [
+    { "flag": "short label", "severity": "high|medium|low", "details": "brief details" }
+  ],
+  "recommended_followups": [
+    { "question": "suggested follow-up question", "why": "reason" }
+  ],
+  "rubric_alignment": { "criterion name or id": "brief note on alignment" }
+}
+
+- overall_assessment.level: confident (strong evidence of authorship), moderate, low, or concern (possible issues).
+- confidence: number between 0 and 1.
+- evidence_signals: positive signals that support student authorship (e.g. consistency with submission, depth in viva).
+- risk_flags: any concerns (e.g. inconsistency, lack of depth).
+- recommended_followups: optional follow-up questions for the teacher.
+- rubric_alignment: optional map of criterion to brief note.
+- Omit rubric_alignment or use {} if not applicable.`, opts.RubricTitle, opts.SubmissionSummary, opts.Transcript)
+
+	var raw string
+	var err error
+	if s.useAnthropic {
+		raw, err = s.callAnthropicAPI(ctx, prompt)
+	} else {
+		raw, err = s.callOpenAIAPI(ctx, prompt)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("LLM authorship report: %w", err)
+	}
+
+	jsonBytes := extractJSON(raw)
+	var out AuthorshipReportPayload
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		return nil, fmt.Errorf("LLM returned invalid JSON: %w", err)
+	}
+	// Ensure provenance is set
+	if out.Provenance.ReportGeneratedAt == "" {
+		out.Provenance.ReportGeneratedAt = time.Now().Format(time.RFC3339)
+	}
+	out.Provenance.InterviewID = opts.InterviewID
+	out.Provenance.SubmissionArtifactIDs = opts.ArtifactIDs
 	return &out, nil
 }
 

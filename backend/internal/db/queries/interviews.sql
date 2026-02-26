@@ -5,7 +5,8 @@ INSERT INTO app.interviews (
     student_id,
     simulated,
     student_name,
-    status
+    status,
+    submission_id
 )
 VALUES (
     @interview_plan_id::uuid,
@@ -13,7 +14,8 @@ VALUES (
     @student_id::uuid,
     @simulated,
     @student_name,
-    @status::app.interview_status
+    @status::app.interview_status,
+    @submission_id::uuid
 )
 RETURNING *;
 
@@ -36,3 +38,15 @@ SELECT *
 FROM app.interviews
 WHERE interview_plan_id = @interview_plan_id::uuid
 ORDER BY started_at DESC;
+
+-- name: GetInterviewBySubmissionID :one
+SELECT *
+FROM app.interviews
+WHERE submission_id = @submission_id::uuid
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: LinkInterviewToSubmission :exec
+UPDATE app.interviews
+SET submission_id = @submission_id::uuid
+WHERE interview_id = @interview_id::uuid;
