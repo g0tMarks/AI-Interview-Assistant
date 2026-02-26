@@ -34,3 +34,7 @@ sql:
             go_type: "string"
           - db_type: "app.response_category"
             go_type: "string"
+          - db_type: "app.submission_status"
+            go_type: "string"
+          - db_type: "app.artifact_type"
+            go_type: "string"

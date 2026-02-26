@@ -18,7 +18,8 @@ INSERT INTO app.interviews (
     student_id,
     simulated,
     student_name,
-    status
+    status,
+    submission_id
 )
 VALUES (
     $1::uuid,
@@ -26,9 +27,10 @@ VALUES (
     $3::uuid,
     $4,
     $5,
-    $6::app.interview_status
+    $6::app.interview_status,
+    $7::uuid
 )
-RETURNING interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at
+RETURNING interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at, submission_id
 `
 
 type CreateInterviewParams struct {
@@ -38,6 +40,7 @@ type CreateInterviewParams struct {
 	Simulated       bool        `db:"simulated" json:"simulated"`
 	StudentName     pgtype.Text `db:"student_name" json:"studentName"`
 	Status          string      `db:"status" json:"status"`
+	SubmissionID    pgtype.UUID `db:"submission_id" json:"submissionId"`
 }
 
 func (q *Queries) CreateInterview(ctx context.Context, arg CreateInterviewParams) (AppInterview, error) {
@@ -48,6 +51,7 @@ func (q *Queries) CreateInterview(ctx context.Context, arg CreateInterviewParams
 		arg.Simulated,
 		arg.StudentName,
 		arg.Status,
+		arg.SubmissionID,
 	)
 	var i AppInterview
 	err := row.Scan(
@@ -60,12 +64,13 @@ func (q *Queries) CreateInterview(ctx context.Context, arg CreateInterviewParams
 		&i.Status,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SubmissionID,
 	)
 	return i, err
 }
 
 const getInterviewByID = `-- name: GetInterviewByID :one
-SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at
+SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at, submission_id
 FROM app.interviews
 WHERE interview_id = $1::uuid
 `
@@ -83,12 +88,55 @@ func (q *Queries) GetInterviewByID(ctx context.Context, interviewID pgtype.UUID)
 		&i.Status,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SubmissionID,
 	)
 	return i, err
 }
 
+const getInterviewBySubmissionID = `-- name: GetInterviewBySubmissionID :one
+SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at, submission_id
+FROM app.interviews
+WHERE submission_id = $1::uuid
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetInterviewBySubmissionID(ctx context.Context, submissionID pgtype.UUID) (AppInterview, error) {
+	row := q.db.QueryRow(ctx, getInterviewBySubmissionID, submissionID)
+	var i AppInterview
+	err := row.Scan(
+		&i.InterviewID,
+		&i.InterviewPlanID,
+		&i.TeacherID,
+		&i.StudentID,
+		&i.Simulated,
+		&i.StudentName,
+		&i.Status,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.SubmissionID,
+	)
+	return i, err
+}
+
+const linkInterviewToSubmission = `-- name: LinkInterviewToSubmission :exec
+UPDATE app.interviews
+SET submission_id = $1::uuid
+WHERE interview_id = $2::uuid
+`
+
+type LinkInterviewToSubmissionParams struct {
+	SubmissionID pgtype.UUID `db:"submission_id" json:"submissionId"`
+	InterviewID  pgtype.UUID `db:"interview_id" json:"interviewId"`
+}
+
+func (q *Queries) LinkInterviewToSubmission(ctx context.Context, arg LinkInterviewToSubmissionParams) error {
+	_, err := q.db.Exec(ctx, linkInterviewToSubmission, arg.SubmissionID, arg.InterviewID)
+	return err
+}
+
 const listInterviewsByPlan = `-- name: ListInterviewsByPlan :many
-SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at
+SELECT interview_id, interview_plan_id, teacher_id, student_id, simulated, student_name, status, started_at, completed_at, submission_id
 FROM app.interviews
 WHERE interview_plan_id = $1::uuid
 ORDER BY started_at DESC
@@ -113,6 +161,7 @@ func (q *Queries) ListInterviewsByPlan(ctx context.Context, interviewPlanID pgty
 			&i.Status,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.SubmissionID,
 		); err != nil {
 			return nil, err
 		}

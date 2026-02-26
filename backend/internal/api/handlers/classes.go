@@ -335,6 +335,7 @@ func (h *ClassHandler) BulkCreateInterviews(w http.ResponseWriter, r *http.Reque
 			Simulated:       simulated,
 			StudentName:     pgtype.Text{},
 			Status:          "in_progress",
+			SubmissionID:    pgtype.UUID{}, // null for bulk class interviews
 		})
 		if err != nil {
 			respSummary.ErrorCount++

@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppArtifactType string
+
+const (
+	AppArtifactTypeMainText        AppArtifactType = "main_text"
+	AppArtifactTypeDraftCheckpoint AppArtifactType = "draft_checkpoint"
+	AppArtifactTypeRevisionNote    AppArtifactType = "revision_note"
+	AppArtifactTypeCitationSource  AppArtifactType = "citation_source"
+	AppArtifactTypeFileRef         AppArtifactType = "file_ref"
+)
+
+func (e *AppArtifactType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppArtifactType(s)
+	case string:
+		*e = AppArtifactType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppArtifactType: %T", src)
+	}
+	return nil
+}
+
+type NullAppArtifactType struct {
+	AppArtifactType AppArtifactType `json:"appArtifactType"`
+	Valid           bool            `json:"valid"` // Valid is true if AppArtifactType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppArtifactType) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppArtifactType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppArtifactType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppArtifactType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppArtifactType), nil
+}
+
 type AppInterviewStatus string
 
 const (
@@ -141,6 +186,59 @@ func (ns NullAppResponseCategory) Value() (driver.Value, error) {
 	return string(ns.AppResponseCategory), nil
 }
 
+type AppSubmissionStatus string
+
+const (
+	AppSubmissionStatusDraft          AppSubmissionStatus = "draft"
+	AppSubmissionStatusSubmitted      AppSubmissionStatus = "submitted"
+	AppSubmissionStatusVivaInProgress AppSubmissionStatus = "viva_in_progress"
+	AppSubmissionStatusVivaCompleted  AppSubmissionStatus = "viva_completed"
+	AppSubmissionStatusReportReady    AppSubmissionStatus = "report_ready"
+)
+
+func (e *AppSubmissionStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppSubmissionStatus(s)
+	case string:
+		*e = AppSubmissionStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppSubmissionStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAppSubmissionStatus struct {
+	AppSubmissionStatus AppSubmissionStatus `json:"appSubmissionStatus"`
+	Valid               bool                `json:"valid"` // Valid is true if AppSubmissionStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppSubmissionStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppSubmissionStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppSubmissionStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppSubmissionStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppSubmissionStatus), nil
+}
+
+type AppAuthorshipReport struct {
+	ReportID     pgtype.UUID        `db:"report_id" json:"reportId"`
+	SubmissionID pgtype.UUID        `db:"submission_id" json:"submissionId"`
+	InterviewID  pgtype.UUID        `db:"interview_id" json:"interviewId"`
+	Report       []byte             `db:"report" json:"report"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+}
+
 type AppClass struct {
 	ClassID   pgtype.UUID        `db:"class_id" json:"classId"`
 	TeacherID pgtype.UUID        `db:"teacher_id" json:"teacherId"`
@@ -195,6 +293,7 @@ type AppInterview struct {
 	Status          string             `db:"status" json:"status"`
 	StartedAt       pgtype.Timestamptz `db:"started_at" json:"startedAt"`
 	CompletedAt     pgtype.Timestamptz `db:"completed_at" json:"completedAt"`
+	SubmissionID    pgtype.UUID        `db:"submission_id" json:"submissionId"`
 }
 
 type AppInterviewMessage struct {
@@ -320,6 +419,26 @@ type AppStudent struct {
 	DisplayName string             `db:"display_name" json:"displayName"`
 	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
 	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type AppSubmission struct {
+	SubmissionID pgtype.UUID        `db:"submission_id" json:"submissionId"`
+	StudentID    pgtype.UUID        `db:"student_id" json:"studentId"`
+	RubricID     pgtype.UUID        `db:"rubric_id" json:"rubricId"`
+	Status       string             `db:"status" json:"status"`
+	Title        pgtype.Text        `db:"title" json:"title"`
+	Notes        pgtype.Text        `db:"notes" json:"notes"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type AppSubmissionArtifact struct {
+	ArtifactID   pgtype.UUID        `db:"artifact_id" json:"artifactId"`
+	SubmissionID pgtype.UUID        `db:"submission_id" json:"submissionId"`
+	ArtifactType string             `db:"artifact_type" json:"artifactType"`
+	Payload      []byte             `db:"payload" json:"payload"`
+	OrderIndex   int32              `db:"order_index" json:"orderIndex"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"createdAt"`
 }
 
 type AppTeacher struct {

@@ -168,7 +168,8 @@ func (h *InterviewHandler) CreateInterview(w http.ResponseWriter, r *http.Reques
 		StudentID:       studentIDPgtype,
 		Simulated:       simulated,
 		StudentName:     studentNamePgtype,
-		Status:           status,
+		Status:          status,
+		SubmissionID:    pgtype.UUID{}, // null when not a submission viva
 	})
 	if err != nil {
 		http.Error(w, "failed to create interview: "+err.Error(), http.StatusInternalServerError)
