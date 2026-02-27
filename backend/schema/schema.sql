@@ -414,3 +414,21 @@ CREATE INDEX IF NOT EXISTS idx_submission_artifacts_submission_id ON app.submiss
 CREATE INDEX IF NOT EXISTS idx_interviews_submission_id ON app.interviews(submission_id);
 CREATE INDEX IF NOT EXISTS idx_authorship_reports_submission_id ON app.authorship_reports(submission_id);
 CREATE INDEX IF NOT EXISTS idx_authorship_reports_submission_created ON app.authorship_reports(submission_id, created_at DESC);
+
+--------------------------------------------------------------------------------
+-- Student profiles: aggregated writing/reasoning/voice features per student
+--------------------------------------------------------------------------------
+
+CREATE TABLE app.student_profiles (
+    student_profile_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id         UUID NOT NULL REFERENCES app.students(student_id) ON DELETE CASCADE,
+    profile            JSONB NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_student_profiles_student_id
+    ON app.student_profiles(student_id);
+
+CREATE INDEX IF NOT EXISTS idx_student_profiles_created_at
+    ON app.student_profiles(student_id, created_at DESC);
+
