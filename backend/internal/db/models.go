@@ -421,6 +421,13 @@ type AppStudent struct {
 	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }
 
+type AppStudentProfile struct {
+	StudentProfileID pgtype.UUID        `db:"student_profile_id" json:"studentProfileId"`
+	StudentID        pgtype.UUID        `db:"student_id" json:"studentId"`
+	Profile          []byte             `db:"profile" json:"profile"`
+	CreatedAt        pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+}
+
 type AppSubmission struct {
 	SubmissionID pgtype.UUID        `db:"submission_id" json:"submissionId"`
 	StudentID    pgtype.UUID        `db:"student_id" json:"studentId"`

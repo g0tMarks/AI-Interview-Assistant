@@ -25,7 +25,8 @@ const (
 	ResponseCategoryDontKnow     = "dont_know"
 )
 
-// LLMService provides an interface for generating interview instructions, parsing rubrics, classifying responses, evaluating interviews, and generating authorship reports.
+// LLMService provides an interface for generating interview instructions, parsing rubrics,
+// classifying responses, evaluating interviews, and generating authorship and profile reports.
 type LLMService interface {
 	GenerateInterviewInstructions(ctx context.Context, rubricTitle string, rubricRawText string) (string, error)
 	ParseRubric(ctx context.Context, rubricTitle string, rawText string) (*rubricparser.ParseRubricOutput, error)
@@ -35,6 +36,8 @@ type LLMService interface {
 	EvaluateInterview(ctx context.Context, rubricTitle string, criteria []evaluation.CriterionForEval, transcript string) (*evaluation.EvalOutput, error)
 	// GenerateAuthorshipReport produces an authorship report from submission summary and viva transcript.
 	GenerateAuthorshipReport(ctx context.Context, opts GenerateAuthorshipReportOpts) (*AuthorshipReportPayload, error)
+	// GenerateStudentProfile aggregates multiple writing samples into a student profile.
+	GenerateStudentProfile(ctx context.Context, opts GenerateStudentProfileOpts) (*StudentProfilePayload, error)
 }
 
 // OpenAIService implements LLMService using OpenAI API (or Anthropic as fallback)
@@ -493,6 +496,90 @@ Respond with a single JSON object only, no other text or markdown. Use exactly t
 	}
 	out.Provenance.InterviewID = opts.InterviewID
 	out.Provenance.SubmissionArtifactIDs = opts.ArtifactIDs
+	return &out, nil
+}
+
+// GenerateStudentProfile produces a student profile from multiple writing samples.
+func (s *OpenAIService) GenerateStudentProfile(ctx context.Context, opts GenerateStudentProfileOpts) (*StudentProfilePayload, error) {
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("LLM API key not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+	}
+	if len(opts.Samples) == 0 {
+		return nil, fmt.Errorf("no samples provided")
+	}
+
+	var buf strings.Builder
+	for i, sample := range opts.Samples {
+		buf.WriteString(fmt.Sprintf("=== Sample %d ===\n", i+1))
+		if sample.Context != "" {
+			buf.WriteString("Context: " + sample.Context + "\n")
+		}
+		buf.WriteString(sample.Text + "\n\n")
+	}
+
+	prompt := fmt.Sprintf(`You are an expert in writing assessment and discourse analysis. A teacher has provided multiple writing samples from the same student.
+
+Student: %s
+
+Below are the student's samples:
+
+%s
+
+Analyse these samples across all of them together (not one at a time) and return a single JSON object with exactly this shape:
+
+{
+  "writing_features": {
+    "avg_sentence_length": 0.0,
+    "lexical_diversity": 0.0,
+    "clause_complexity": "string description",
+    "rhetorical_structure_patterns": ["string"],
+    "common_errors": ["string"],
+    "argument_depth_markers": ["string"]
+  },
+  "reasoning_features": {
+    "causal_language_use": ["string"],
+    "evidence_integration_patterns": ["string"],
+    "paragraph_cohesion_patterns": ["string"]
+  },
+  "voice_markers": {
+    "frequent_phrases": ["string"],
+    "preferred_connectives": ["string"],
+    "tone_indicators": ["string"]
+  },
+  "provenance": {
+    "submission_ids": ["uuid as string"],
+    "artifact_ids": ["uuid as string"],
+    "sample_count": 0,
+    "generated_at": "ISO8601 timestamp"
+  }
+}
+
+Rules:
+- avg_sentence_length: approximate average words per sentence across all samples.
+- lexical_diversity: approximate type-token ratio between 0 and 1.
+- Focus on stable traits that appear in several samples.
+- Reply with only the JSON object, no extra commentary.`, opts.StudentDisplayName, buf.String())
+
+	var raw string
+	var err error
+	if s.useAnthropic {
+		raw, err = s.callAnthropicAPI(ctx, prompt)
+	} else {
+		raw, err = s.callOpenAIAPI(ctx, prompt)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("LLM student profile: %w", err)
+	}
+
+	jsonBytes := extractJSON(raw)
+	var out StudentProfilePayload
+	if err := json.Unmarshal(jsonBytes, &out); err != nil {
+		return nil, fmt.Errorf("LLM returned invalid JSON: %w", err)
+	}
+
+	if out.Provenance.GeneratedAt == "" {
+		out.Provenance.GeneratedAt = time.Now().Format(time.RFC3339)
+	}
 	return &out, nil
 }
 

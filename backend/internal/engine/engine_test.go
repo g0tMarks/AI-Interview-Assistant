@@ -77,6 +77,14 @@ func (m *mockLLM) EvaluateInterview(_ context.Context, _ string, _ []evaluation.
 	return nil, nil
 }
 
+func (m *mockLLM) GenerateAuthorshipReport(context.Context, services.GenerateAuthorshipReportOpts) (*services.AuthorshipReportPayload, error) {
+	return nil, nil
+}
+
+func (m *mockLLM) GenerateStudentProfile(context.Context, services.GenerateStudentProfileOpts) (*services.StudentProfilePayload, error) {
+	return nil, nil
+}
+
 var _ services.LLMService = (*mockLLM)(nil)
 
 // pgUUID returns a valid pgtype.UUID from a uuid.UUID.

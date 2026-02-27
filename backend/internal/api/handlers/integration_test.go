@@ -520,6 +520,35 @@ func (m *mockLLMForGoldenPath) GenerateAuthorshipReport(ctx context.Context, opt
 	}, nil
 }
 
+func (m *mockLLMForGoldenPath) GenerateStudentProfile(ctx context.Context, opts services.GenerateStudentProfileOpts) (*services.StudentProfilePayload, error) {
+	return &services.StudentProfilePayload{
+		WritingFeatures: services.WritingFeatures{
+			AvgSentenceLength:    12.5,
+			LexicalDiversity:     0.6,
+			ClauseComplexity:     "varied with some subordination",
+			RhetoricalStructure:  []string{"thesis-evidence-conclusion"},
+			CommonErrors:         []string{"subject-verb agreement"},
+			ArgumentDepthMarkers: []string{"use of counter-argument"},
+		},
+		ReasoningFeatures: services.ReasoningFeatures{
+			CausalLanguageUse:         []string{"because", "therefore"},
+			EvidenceIntegration:       []string{"quotes integrated with explanation"},
+			ParagraphCohesionPatterns: []string{"topic sentences with linking phrases"},
+		},
+		VoiceMarkers: services.VoiceMarkers{
+			FrequentPhrases:      []string{"in conclusion"},
+			PreferredConnectives: []string{"however", "moreover"},
+			ToneIndicators:       []string{"formal", "confident"},
+		},
+		Provenance: services.ProfileProvenance{
+			SubmissionIDs: nil,
+			ArtifactIDs:   nil,
+			SampleCount:   len(opts.Samples),
+			GeneratedAt:   "2025-01-01T00:00:00Z",
+		},
+	}, nil
+}
+
 // TestGoldenPathFullFlow runs: teacher → rubric → template → add criterion + question + branch → interview → POST /next until done → GET results.
 func TestGoldenPathFullFlow(t *testing.T) {
 	conn, queries := setupTestDB(t)
@@ -907,6 +936,149 @@ func TestAuthorshipFlow(t *testing.T) {
 		t.Fatalf("expected level confident, got %s", reportResp.Report.OverallAssessment.Level)
 	}
 	t.Log("Authorship flow test passed.")
+}
+
+// TestStudentProfileFlow runs: create rubric → student → submissions → artifacts → run student profile → get student profile.
+func TestStudentProfileFlow(t *testing.T) {
+	conn, queries := setupTestDB(t)
+	defer teardownTestDB(t, conn)
+
+	ctx := context.Background()
+	teacherID := createTestTeacher(t, queries, ctx)
+	defer cleanupTestData(t, queries, ctx, teacherID)
+
+	mockLLM := &mockLLMForGoldenPath{}
+	rubricHandler := NewRubricHandler(queries, nil, nil)
+	submissionHandler := NewSubmissionHandler(queries, mockLLM, nil)
+	studentProfileHandler := NewStudentProfileHandler(queries, mockLLM)
+
+	// Create rubric needed for submissions.
+	createRubricReq := CreateRubricRequest{
+		TeacherID:   teacherID,
+		Title:       "Profile Test Rubric",
+		Description: "For student profile flow",
+		RawText:     "Students write argumentative essays.",
+	}
+	reqBody, _ := json.Marshal(createRubricReq)
+	req := httptest.NewRequest("POST", "/rubrics", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	rubricHandler.CreateRubric(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create rubric: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var rubricResp RubricResponse
+	if err := json.NewDecoder(w.Body).Decode(&rubricResp); err != nil {
+		t.Fatalf("decode rubric: %v", err)
+	}
+	rubricID := rubricResp.RubricID
+
+	// Create student via DB.
+	student, err := queries.CreateStudent(ctx, db.CreateStudentParams{
+		Email:       "profile-student@test.com",
+		DisplayName: "Profile Student",
+	})
+	if err != nil {
+		t.Fatalf("create student: %v", err)
+	}
+	studentID := student.StudentID.Bytes
+
+	// Create two submissions for the student via handler.
+	var submissionIDs []uuid.UUID
+	for i := 0; i < 2; i++ {
+		createSubReq := CreateSubmissionRequest{
+			StudentID: studentID,
+			RubricID:  rubricID,
+			Title:     fmt.Sprintf("Submission %d", i+1),
+		}
+		reqBody, _ = json.Marshal(createSubReq)
+		req = httptest.NewRequest("POST", "/submissions", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		submissionHandler.CreateSubmission(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create submission %d: expected 201, got %d: %s", i+1, w.Code, w.Body.String())
+		}
+		var subResp SubmissionResponse
+		if err := json.NewDecoder(w.Body).Decode(&subResp); err != nil {
+			t.Fatalf("decode submission %d: %v", i+1, err)
+		}
+		submissionIDs = append(submissionIDs, subResp.SubmissionID)
+	}
+
+	// Add one main_text artifact to each submission.
+	for i, sid := range submissionIDs {
+		text := fmt.Sprintf("This is essay content %d for the profile test.", i+1)
+		artifactBody := []byte(fmt.Sprintf(`{"artifactType":"main_text","payload":{"text":%q}}`, text))
+		req = httptest.NewRequest("POST", "/submissions/"+sid.String()+"/artifacts", bytes.NewReader(artifactBody))
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		submissionHandler.CreateArtifact(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create artifact for submission %d: expected 201, got %d: %s", i+1, w.Code, w.Body.String())
+		}
+	}
+
+	// Use chi router so URL params are set for student profile routes.
+	r := chi.NewRouter()
+	r.Post("/students/{id}/profile/run", studentProfileHandler.RunStudentProfile)
+	r.Get("/students/{id}/profile", studentProfileHandler.GetStudentProfile)
+
+	// Run student profile.
+	studentUUID := uuid.UUID(studentID)
+	req = httptest.NewRequest("POST", "/students/"+studentUUID.String()+"/profile/run", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("run student profile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var runResp struct {
+		StudentProfileID uuid.UUID                    `json:"studentProfileId"`
+		StudentID        uuid.UUID                    `json:"studentId"`
+		Profile          services.StudentProfilePayload `json:"profile"`
+		CreatedAt        string                       `json:"createdAt"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&runResp); err != nil {
+		t.Fatalf("decode run profile response: %v", err)
+	}
+	if runResp.StudentID != studentID {
+		t.Fatalf("expected studentId %v, got %v", studentID, runResp.StudentID)
+	}
+	if runResp.Profile.WritingFeatures.AvgSentenceLength == 0 {
+		t.Fatal("expected non-zero avg_sentence_length in profile")
+	}
+	if len(runResp.Profile.VoiceMarkers.FrequentPhrases) == 0 {
+		t.Fatal("expected at least one frequent phrase in profile")
+	}
+	if runResp.Profile.Provenance.SampleCount != 2 {
+		t.Fatalf("expected SampleCount 2, got %d", runResp.Profile.Provenance.SampleCount)
+	}
+
+	// Get latest student profile.
+	req = httptest.NewRequest("GET", "/students/"+studentUUID.String()+"/profile", nil)
+	req = req.WithContext(ctx)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get student profile: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var getResp struct {
+		StudentProfileID uuid.UUID                    `json:"studentProfileId"`
+		StudentID        uuid.UUID                    `json:"studentId"`
+		Profile          services.StudentProfilePayload `json:"profile"`
+		CreatedAt        string                       `json:"createdAt"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&getResp); err != nil {
+		t.Fatalf("decode get profile response: %v", err)
+	}
+	if getResp.StudentID != studentID {
+		t.Fatalf("expected studentId %v in get profile, got %v", studentID, getResp.StudentID)
+	}
+	if getResp.Profile.WritingFeatures.AvgSentenceLength != runResp.Profile.WritingFeatures.AvgSentenceLength {
+		t.Fatalf("expected avg_sentence_length %v, got %v", runResp.Profile.WritingFeatures.AvgSentenceLength, getResp.Profile.WritingFeatures.AvgSentenceLength)
+	}
+	t.Log("Student profile flow test passed.")
 }
 
 // Helper function to create a bool pointer

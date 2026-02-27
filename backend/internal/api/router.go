@@ -32,6 +32,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	interviewHandler := handlers.NewInterviewHandler(deps.Queries, interviewEngine, evalRunner)
 	submissionHandler := handlers.NewSubmissionHandler(deps.Queries, deps.LLMService, interviewHandler)
 	studentHandler := handlers.NewStudentHandler(deps.Queries)
+	studentProfileHandler := handlers.NewStudentProfileHandler(deps.Queries, deps.LLMService)
 	classHandler := handlers.NewClassHandler(deps.Queries)
 	rosterHandler := handlers.NewRosterHandler(deps.Queries)
 	authHandler := handlers.NewAuthHandler(deps.Queries, deps.JWTSecret)
@@ -84,6 +85,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Get("/students", studentHandler.ListStudents)
 	r.Get("/students/{id}", studentHandler.GetStudent)
 	r.Patch("/students/{id}", studentHandler.UpdateStudent)
+	r.Post("/students/{id}/profile/run", studentProfileHandler.RunStudentProfile)
+	r.Get("/students/{id}/profile", studentProfileHandler.GetStudentProfile)
 
 	// Classes (teacher-scoped list via ?teacherId=)
 	r.Post("/classes", classHandler.CreateClass)
