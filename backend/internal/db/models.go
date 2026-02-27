@@ -11,6 +11,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppAlignmentLevel string
+
+const (
+	AppAlignmentLevelStrong  AppAlignmentLevel = "strong"
+	AppAlignmentLevelPartial AppAlignmentLevel = "partial"
+	AppAlignmentLevelWeak    AppAlignmentLevel = "weak"
+)
+
+func (e *AppAlignmentLevel) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppAlignmentLevel(s)
+	case string:
+		*e = AppAlignmentLevel(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppAlignmentLevel: %T", src)
+	}
+	return nil
+}
+
+type NullAppAlignmentLevel struct {
+	AppAlignmentLevel AppAlignmentLevel `json:"appAlignmentLevel"`
+	Valid             bool              `json:"valid"` // Valid is true if AppAlignmentLevel is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppAlignmentLevel) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppAlignmentLevel, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppAlignmentLevel.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppAlignmentLevel) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppAlignmentLevel), nil
+}
+
 type AppArtifactType string
 
 const (
@@ -54,6 +97,92 @@ func (ns NullAppArtifactType) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.AppArtifactType), nil
+}
+
+type AppAuthorshipRecommendation string
+
+const (
+	AppAuthorshipRecommendationNoAction             AppAuthorshipRecommendation = "no_action"
+	AppAuthorshipRecommendationReflectionSuggested  AppAuthorshipRecommendation = "reflection_suggested"
+	AppAuthorshipRecommendationMicroVivaRecommended AppAuthorshipRecommendation = "micro_viva_recommended"
+)
+
+func (e *AppAuthorshipRecommendation) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppAuthorshipRecommendation(s)
+	case string:
+		*e = AppAuthorshipRecommendation(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppAuthorshipRecommendation: %T", src)
+	}
+	return nil
+}
+
+type NullAppAuthorshipRecommendation struct {
+	AppAuthorshipRecommendation AppAuthorshipRecommendation `json:"appAuthorshipRecommendation"`
+	Valid                       bool                        `json:"valid"` // Valid is true if AppAuthorshipRecommendation is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppAuthorshipRecommendation) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppAuthorshipRecommendation, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppAuthorshipRecommendation.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppAuthorshipRecommendation) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppAuthorshipRecommendation), nil
+}
+
+type AppDiscrepancyLevel string
+
+const (
+	AppDiscrepancyLevelLow      AppDiscrepancyLevel = "low"
+	AppDiscrepancyLevelModerate AppDiscrepancyLevel = "moderate"
+	AppDiscrepancyLevelHigh     AppDiscrepancyLevel = "high"
+)
+
+func (e *AppDiscrepancyLevel) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppDiscrepancyLevel(s)
+	case string:
+		*e = AppDiscrepancyLevel(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppDiscrepancyLevel: %T", src)
+	}
+	return nil
+}
+
+type NullAppDiscrepancyLevel struct {
+	AppDiscrepancyLevel AppDiscrepancyLevel `json:"appDiscrepancyLevel"`
+	Valid               bool                `json:"valid"` // Valid is true if AppDiscrepancyLevel is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppDiscrepancyLevel) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppDiscrepancyLevel, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppDiscrepancyLevel.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppDiscrepancyLevel) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppDiscrepancyLevel), nil
 }
 
 type AppInterviewStatus string
@@ -141,6 +270,49 @@ func (ns NullAppMessageSender) Value() (driver.Value, error) {
 	return string(ns.AppMessageSender), nil
 }
 
+type AppProfileStatus string
+
+const (
+	AppProfileStatusActive     AppProfileStatus = "active"
+	AppProfileStatusSuperseded AppProfileStatus = "superseded"
+	AppProfileStatusArchived   AppProfileStatus = "archived"
+)
+
+func (e *AppProfileStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppProfileStatus(s)
+	case string:
+		*e = AppProfileStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppProfileStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAppProfileStatus struct {
+	AppProfileStatus AppProfileStatus `json:"appProfileStatus"`
+	Valid            bool             `json:"valid"` // Valid is true if AppProfileStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppProfileStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppProfileStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppProfileStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppProfileStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppProfileStatus), nil
+}
+
 type AppResponseCategory string
 
 const (
@@ -184,6 +356,49 @@ func (ns NullAppResponseCategory) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.AppResponseCategory), nil
+}
+
+type AppReviewStatus string
+
+const (
+	AppReviewStatusPending  AppReviewStatus = "pending"
+	AppReviewStatusReviewed AppReviewStatus = "reviewed"
+	AppReviewStatusResolved AppReviewStatus = "resolved"
+)
+
+func (e *AppReviewStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppReviewStatus(s)
+	case string:
+		*e = AppReviewStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppReviewStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAppReviewStatus struct {
+	AppReviewStatus AppReviewStatus `json:"appReviewStatus"`
+	Valid           bool            `json:"valid"` // Valid is true if AppReviewStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppReviewStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppReviewStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppReviewStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppReviewStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppReviewStatus), nil
 }
 
 type AppSubmissionStatus string
@@ -231,12 +446,137 @@ func (ns NullAppSubmissionStatus) Value() (driver.Value, error) {
 	return string(ns.AppSubmissionStatus), nil
 }
 
+type AppTeacherDecision string
+
+const (
+	AppTeacherDecisionAuthenticConfirmed   AppTeacherDecision = "authentic_confirmed"
+	AppTeacherDecisionAuthenticWithSupport AppTeacherDecision = "authentic_with_support"
+	AppTeacherDecisionFollowUpRequired     AppTeacherDecision = "follow_up_required"
+	AppTeacherDecisionConcernNotResolved   AppTeacherDecision = "concern_not_resolved"
+)
+
+func (e *AppTeacherDecision) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppTeacherDecision(s)
+	case string:
+		*e = AppTeacherDecision(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppTeacherDecision: %T", src)
+	}
+	return nil
+}
+
+type NullAppTeacherDecision struct {
+	AppTeacherDecision AppTeacherDecision `json:"appTeacherDecision"`
+	Valid              bool               `json:"valid"` // Valid is true if AppTeacherDecision is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppTeacherDecision) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppTeacherDecision, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppTeacherDecision.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppTeacherDecision) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppTeacherDecision), nil
+}
+
+type AppWritingSourceType string
+
+const (
+	AppWritingSourceTypeBaselineInClass    AppWritingSourceType = "baseline_in_class"
+	AppWritingSourceTypeBaselineSupervised AppWritingSourceType = "baseline_supervised"
+	AppWritingSourceTypeAssessmentUpload   AppWritingSourceType = "assessment_upload"
+	AppWritingSourceTypeVivaTranscript     AppWritingSourceType = "viva_transcript"
+)
+
+func (e *AppWritingSourceType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppWritingSourceType(s)
+	case string:
+		*e = AppWritingSourceType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppWritingSourceType: %T", src)
+	}
+	return nil
+}
+
+type NullAppWritingSourceType struct {
+	AppWritingSourceType AppWritingSourceType `json:"appWritingSourceType"`
+	Valid                bool                 `json:"valid"` // Valid is true if AppWritingSourceType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppWritingSourceType) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppWritingSourceType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppWritingSourceType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppWritingSourceType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppWritingSourceType), nil
+}
+
+type AppAuthorshipAnalysis struct {
+	AuthorshipAnalysisID    pgtype.UUID                 `db:"authorship_analysis_id" json:"authorshipAnalysisId"`
+	StudentID               pgtype.UUID                 `db:"student_id" json:"studentId"`
+	StudentWritingSampleID  pgtype.UUID                 `db:"student_writing_sample_id" json:"studentWritingSampleId"`
+	StudentProfileVersionID pgtype.UUID                 `db:"student_profile_version_id" json:"studentProfileVersionId"`
+	DiscrepancyLevel        AppDiscrepancyLevel         `db:"discrepancy_level" json:"discrepancyLevel"`
+	StylometricDistance     pgtype.Numeric              `db:"stylometric_distance" json:"stylometricDistance"`
+	EmbeddingDistance       pgtype.Numeric              `db:"embedding_distance" json:"embeddingDistance"`
+	FeatureDeltas           []byte                      `db:"feature_deltas" json:"featureDeltas"`
+	Explanation             []byte                      `db:"explanation" json:"explanation"`
+	Recommendation          AppAuthorshipRecommendation `db:"recommendation" json:"recommendation"`
+	ModelVersion            pgtype.Text                 `db:"model_version" json:"modelVersion"`
+	CreatedAt               pgtype.Timestamptz          `db:"created_at" json:"createdAt"`
+}
+
 type AppAuthorshipReport struct {
 	ReportID     pgtype.UUID        `db:"report_id" json:"reportId"`
 	SubmissionID pgtype.UUID        `db:"submission_id" json:"submissionId"`
 	InterviewID  pgtype.UUID        `db:"interview_id" json:"interviewId"`
 	Report       []byte             `db:"report" json:"report"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+}
+
+type AppAuthorshipReview struct {
+	AuthorshipReviewID   pgtype.UUID            `db:"authorship_review_id" json:"authorshipReviewId"`
+	AuthorshipAnalysisID pgtype.UUID            `db:"authorship_analysis_id" json:"authorshipAnalysisId"`
+	TeacherID            pgtype.UUID            `db:"teacher_id" json:"teacherId"`
+	ReviewStatus         AppReviewStatus        `db:"review_status" json:"reviewStatus"`
+	TeacherDecision      NullAppTeacherDecision `db:"teacher_decision" json:"teacherDecision"`
+	Notes                pgtype.Text            `db:"notes" json:"notes"`
+	ReviewedAt           pgtype.Timestamptz     `db:"reviewed_at" json:"reviewedAt"`
+	CreatedAt            pgtype.Timestamptz     `db:"created_at" json:"createdAt"`
+}
+
+type AppAuthorshipViva struct {
+	AuthorshipVivaID           pgtype.UUID           `db:"authorship_viva_id" json:"authorshipVivaId"`
+	AuthorshipAnalysisID       pgtype.UUID           `db:"authorship_analysis_id" json:"authorshipAnalysisId"`
+	GeneratedQuestions         []byte                `db:"generated_questions" json:"generatedQuestions"`
+	Transcript                 pgtype.Text           `db:"transcript" json:"transcript"`
+	ConceptualAlignmentSummary []byte                `db:"conceptual_alignment_summary" json:"conceptualAlignmentSummary"`
+	AlignmentLevel             NullAppAlignmentLevel `db:"alignment_level" json:"alignmentLevel"`
+	AlignmentNotes             pgtype.Text           `db:"alignment_notes" json:"alignmentNotes"`
+	CreatedAt                  pgtype.Timestamptz    `db:"created_at" json:"createdAt"`
 }
 
 type AppClass struct {
@@ -426,6 +766,35 @@ type AppStudentProfile struct {
 	StudentID        pgtype.UUID        `db:"student_id" json:"studentId"`
 	Profile          []byte             `db:"profile" json:"profile"`
 	CreatedAt        pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+}
+
+type AppStudentProfileBaselineSample struct {
+	StudentProfileVersionID pgtype.UUID `db:"student_profile_version_id" json:"studentProfileVersionId"`
+	StudentWritingSampleID  pgtype.UUID `db:"student_writing_sample_id" json:"studentWritingSampleId"`
+}
+
+type AppStudentProfileVersion struct {
+	StudentProfileVersionID pgtype.UUID        `db:"student_profile_version_id" json:"studentProfileVersionId"`
+	StudentID               pgtype.UUID        `db:"student_id" json:"studentId"`
+	Semester                string             `db:"semester" json:"semester"`
+	Version                 int32              `db:"version" json:"version"`
+	ProfileStatus           AppProfileStatus   `db:"profile_status" json:"profileStatus"`
+	FeatureSummary          []byte             `db:"feature_summary" json:"featureSummary"`
+	ModelVersion            pgtype.Text        `db:"model_version" json:"modelVersion"`
+	CreatedAt               pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+}
+
+type AppStudentWritingSample struct {
+	StudentWritingSampleID pgtype.UUID          `db:"student_writing_sample_id" json:"studentWritingSampleId"`
+	StudentID              pgtype.UUID          `db:"student_id" json:"studentId"`
+	Semester               string               `db:"semester" json:"semester"`
+	AssignmentName         pgtype.Text          `db:"assignment_name" json:"assignmentName"`
+	SourceType             AppWritingSourceType `db:"source_type" json:"sourceType"`
+	WrittenAt              pgtype.Timestamptz   `db:"written_at" json:"writtenAt"`
+	TextContent            string               `db:"text_content" json:"textContent"`
+	IsTeacherVerified      bool                 `db:"is_teacher_verified" json:"isTeacherVerified"`
+	RawFeatures            []byte               `db:"raw_features" json:"rawFeatures"`
+	CreatedAt              pgtype.Timestamptz   `db:"created_at" json:"createdAt"`
 }
 
 type AppSubmission struct {

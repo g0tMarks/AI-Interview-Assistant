@@ -8,6 +8,51 @@ CREATE SCHEMA IF NOT EXISTS app;
 CREATE TYPE app.message_sender AS ENUM ('ai', 'user');
 CREATE TYPE app.interview_status AS ENUM ('draft', 'in_progress', 'completed');
 
+-- Authorship / writing-related enums
+CREATE TYPE app.writing_source_type AS ENUM (
+    'baseline_in_class',
+    'baseline_supervised',
+    'assessment_upload',
+    'viva_transcript'
+);
+
+CREATE TYPE app.profile_status AS ENUM (
+    'active',
+    'superseded',
+    'archived'
+);
+
+CREATE TYPE app.discrepancy_level AS ENUM (
+    'low',
+    'moderate',
+    'high'
+);
+
+CREATE TYPE app.authorship_recommendation AS ENUM (
+    'no_action',
+    'reflection_suggested',
+    'micro_viva_recommended'
+);
+
+CREATE TYPE app.review_status AS ENUM (
+    'pending',
+    'reviewed',
+    'resolved'
+);
+
+CREATE TYPE app.teacher_decision AS ENUM (
+    'authentic_confirmed',
+    'authentic_with_support',
+    'follow_up_required',
+    'concern_not_resolved'
+);
+
+CREATE TYPE app.alignment_level AS ENUM (
+    'strong',
+    'partial',
+    'weak'
+);
+
 -- Response category ENUM for branching logic
 CREATE TYPE app.response_category AS ENUM (
     'strong',
@@ -37,6 +82,50 @@ CREATE TABLE app.students (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+--------------------------------------------------------------------------------
+-- Student writing samples and authorship profiling
+--------------------------------------------------------------------------------
+
+-- Canonical store of all digitised student writing samples
+CREATE TABLE app.student_writing_samples (
+    student_writing_sample_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id                UUID NOT NULL REFERENCES app.students(student_id) ON DELETE CASCADE,
+
+    semester                  TEXT NOT NULL,
+    assignment_name           TEXT,
+    source_type               app.writing_source_type NOT NULL,
+    written_at                TIMESTAMPTZ,
+
+    text_content              TEXT NOT NULL,
+
+    is_teacher_verified       BOOLEAN NOT NULL DEFAULT FALSE,
+    raw_features              JSONB,
+
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Versioned per-student, per-semester writing profiles (fingerprints)
+CREATE TABLE app.student_profile_versions (
+    student_profile_version_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id                 UUID NOT NULL REFERENCES app.students(student_id) ON DELETE CASCADE,
+
+    semester                   TEXT NOT NULL,
+    version                    INT NOT NULL DEFAULT 1,
+    profile_status             app.profile_status NOT NULL DEFAULT 'active',
+
+    feature_summary            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    model_version              TEXT,
+
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Join table linking profiles to the baseline samples used to construct them
+CREATE TABLE app.student_profile_baseline_samples (
+    student_profile_version_id UUID NOT NULL REFERENCES app.student_profile_versions(student_profile_version_id) ON DELETE CASCADE,
+    student_writing_sample_id  UUID NOT NULL REFERENCES app.student_writing_samples(student_writing_sample_id) ON DELETE CASCADE,
+    PRIMARY KEY (student_profile_version_id, student_writing_sample_id)
+);
+
 -- Classes (teacher-owned; class_code used for student join / auth)
 CREATE TABLE app.classes (
     class_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -53,6 +142,56 @@ CREATE TABLE app.roster (
     student_id UUID NOT NULL REFERENCES app.students(student_id) ON DELETE CASCADE,
     joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (class_id, student_id)
+);
+
+--------------------------------------------------------------------------------
+-- Authorship analyses, reviews, and vivas
+--------------------------------------------------------------------------------
+
+-- Analysis of a specific assessment sample against a student's baseline profile
+CREATE TABLE app.authorship_analyses (
+    authorship_analysis_id   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id               UUID NOT NULL REFERENCES app.students(student_id) ON DELETE CASCADE,
+    student_writing_sample_id UUID NOT NULL REFERENCES app.student_writing_samples(student_writing_sample_id) ON DELETE CASCADE,
+    student_profile_version_id UUID NOT NULL REFERENCES app.student_profile_versions(student_profile_version_id) ON DELETE CASCADE,
+
+    discrepancy_level        app.discrepancy_level NOT NULL,
+    stylometric_distance     NUMERIC,
+    embedding_distance       NUMERIC,
+    feature_deltas           JSONB,
+    explanation              JSONB,
+    recommendation           app.authorship_recommendation NOT NULL,
+
+    model_version            TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Teacher review workflow over an authorship analysis
+CREATE TABLE app.authorship_reviews (
+    authorship_review_id     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    authorship_analysis_id   UUID NOT NULL REFERENCES app.authorship_analyses(authorship_analysis_id) ON DELETE CASCADE,
+    teacher_id               UUID NOT NULL REFERENCES app.teachers(teacher_id) ON DELETE CASCADE,
+
+    review_status            app.review_status NOT NULL DEFAULT 'pending',
+    teacher_decision         app.teacher_decision,
+    notes                    TEXT,
+
+    reviewed_at              TIMESTAMPTZ,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Viva (oral follow-up) linked to an analysis
+CREATE TABLE app.authorship_vivas (
+    authorship_viva_id       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    authorship_analysis_id   UUID NOT NULL REFERENCES app.authorship_analyses(authorship_analysis_id) ON DELETE CASCADE,
+
+    generated_questions      JSONB,
+    transcript               TEXT,
+    conceptual_alignment_summary JSONB,
+    alignment_level          app.alignment_level,
+    alignment_notes          TEXT,
+
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Rubrics
@@ -298,6 +437,30 @@ CREATE INDEX IF NOT EXISTS idx_roster_class_id
 
 CREATE INDEX IF NOT EXISTS idx_roster_student_id
     ON app.roster(student_id);
+
+CREATE INDEX IF NOT EXISTS idx_student_writing_samples_student_semester
+    ON app.student_writing_samples(student_id, semester);
+
+CREATE INDEX IF NOT EXISTS idx_student_profile_versions_student_semester
+    ON app.student_profile_versions(student_id, semester);
+
+CREATE INDEX IF NOT EXISTS idx_authorship_analyses_student_id
+    ON app.authorship_analyses(student_id);
+
+CREATE INDEX IF NOT EXISTS idx_authorship_analyses_sample_id
+    ON app.authorship_analyses(student_writing_sample_id);
+
+CREATE INDEX IF NOT EXISTS idx_authorship_analyses_profile_id
+    ON app.authorship_analyses(student_profile_version_id);
+
+CREATE INDEX IF NOT EXISTS idx_authorship_reviews_analysis_id
+    ON app.authorship_reviews(authorship_analysis_id);
+
+CREATE INDEX IF NOT EXISTS idx_authorship_reviews_teacher_status
+    ON app.authorship_reviews(teacher_id, review_status);
+
+CREATE INDEX IF NOT EXISTS idx_authorship_vivas_analysis_id
+    ON app.authorship_vivas(authorship_analysis_id);
 
 CREATE INDEX IF NOT EXISTS idx_rubrics_teacher_id
     ON app.rubrics(teacher_id);
