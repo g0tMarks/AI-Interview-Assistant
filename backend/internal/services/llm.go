@@ -428,14 +428,29 @@ func (s *OpenAIService) GenerateAuthorshipReport(ctx context.Context, opts Gener
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("LLM API key not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)")
 	}
-	if strings.TrimSpace(opts.Transcript) == "" {
-		return nil, fmt.Errorf("transcript is empty")
+
+	var baselineSection string
+	if opts.StudentProfile != nil {
+		p := opts.StudentProfile
+		baselineSection = fmt.Sprintf(`
+Student writing baseline (from prior verified work):
+- Avg sentence length: %.1f, Lexical diversity: %.2f
+- Clause complexity: %s
+- Common voice markers: %s
+- Frequent phrases: %s
+
+Compare the submission and viva responses against this baseline.
+Note any significant style divergence as a risk flag.
+`, p.WritingFeatures.AvgSentenceLength, p.WritingFeatures.LexicalDiversity,
+			p.WritingFeatures.ClauseComplexity,
+			joinStrings(p.VoiceMarkers.ToneIndicators),
+			joinStrings(p.VoiceMarkers.FrequentPhrases))
 	}
 
 	prompt := fmt.Sprintf(`You are an expert assessor evaluating student authorship. Based on the student's submitted work and a short viva (interview) transcript, produce an authorship assessment.
 
 Rubric/task: %s
-
+%s
 Student submission summary (main text and/or drafts/notes):
 %s
 
@@ -472,7 +487,7 @@ Respond with a single JSON object only, no other text or markdown. Use exactly t
 - risk_flags: any concerns (e.g. inconsistency, lack of depth).
 - recommended_followups: optional follow-up questions for the teacher.
 - rubric_alignment: optional map of criterion to brief note.
-- Omit rubric_alignment or use {} if not applicable.`, opts.RubricTitle, opts.SubmissionSummary, opts.Transcript)
+- Omit rubric_alignment or use {} if not applicable.`, opts.RubricTitle, baselineSection, opts.SubmissionSummary, opts.Transcript)
 
 	var raw string
 	var err error
@@ -592,4 +607,8 @@ func extractJSON(s string) []byte {
 		return []byte(strings.TrimSpace(m[1]))
 	}
 	return []byte(s)
+}
+
+func joinStrings(ss []string) string {
+	return strings.Join(ss, ", ")
 }

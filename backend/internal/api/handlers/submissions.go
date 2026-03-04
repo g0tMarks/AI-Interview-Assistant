@@ -523,6 +523,15 @@ func (h *SubmissionHandler) RunAuthorship(w http.ResponseWriter, r *http.Request
 		transcript = "(no viva messages)"
 	}
 
+	var studentProfile *services.StudentProfilePayload
+	profileRec, err := h.q.GetLatestStudentProfileByStudent(ctx, sub.StudentID)
+	if err == nil {
+		var p services.StudentProfilePayload
+		if jsonErr := json.Unmarshal(profileRec.Profile, &p); jsonErr == nil {
+			studentProfile = &p
+		}
+	}
+
 	rubric, _ := h.q.GetRubricByID(ctx, sub.RubricID)
 	opts := services.GenerateAuthorshipReportOpts{
 		RubricTitle:       rubric.Title,
@@ -530,6 +539,7 @@ func (h *SubmissionHandler) RunAuthorship(w http.ResponseWriter, r *http.Request
 		Transcript:        transcript,
 		InterviewID:       interviewID,
 		ArtifactIDs:       artifactIDs,
+		StudentProfile:    studentProfile,
 	}
 	reportPayload, err := h.llm.GenerateAuthorshipReport(ctx, opts)
 	if err != nil {

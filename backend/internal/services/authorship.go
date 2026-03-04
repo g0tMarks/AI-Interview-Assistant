@@ -59,6 +59,7 @@ type GenerateAuthorshipReportOpts struct {
 	Transcript        string // viva messages as text
 	InterviewID       string
 	ArtifactIDs       []string
+	StudentProfile    *StudentProfilePayload // optional baseline profile for comparison
 }
 
 // ToJSONB returns the payload as JSON bytes for storing in DB.
