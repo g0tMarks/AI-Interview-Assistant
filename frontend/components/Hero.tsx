@@ -12,6 +12,7 @@ export default function Hero() {
           Authenticate student thinking, not just writing.
         </h1>
         <p className="text-lg md:text-xl text-muted font-normal leading-relaxed mb-4 max-w-2xl">
+          Can you trust the authenticity of any student work completed outside of the class?
           Microviva captures baseline writing in class, compares submitted work against it,
           and uses AI to run tailored and dynamic interviews that reveal whether the thinking behind 
           the work is genuine. 
